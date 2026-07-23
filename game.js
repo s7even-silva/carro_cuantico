@@ -160,6 +160,7 @@ function cacheEls() {
     "toast",
     "result-eyebrow", "result-title", "result-text",
     "track-canvas", "compass-canvas", "circuit-canvas",
+    "server-warning", "server-warning-url",
   ].forEach((id) => (els[id] = document.getElementById(id)));
 }
 
@@ -815,6 +816,32 @@ function wire() {
 }
 
 // ---------------------------------------------------------------------
+// SALUD DEL BACKEND
+// ---------------------------------------------------------------------
+// Error recurrente en la práctica: el jugador corre "python -m
+// http.server" (el módulo genérico de Python) en vez de "python
+// server.py" -- la página carga bien (sirve los mismos archivos
+// estáticos) pero /api/measure no existe, así que recién se entera del
+// problema al final de la partida, al intentar medir. Esto lo detecta
+// apenas carga la página y lo avisa de entrada, sin esperar a jugar.
+async function checkBackendHealth() {
+  els["server-warning-url"].textContent = location.origin + "/";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  try {
+    const resp = await fetch("/api/optimal?n=2", { signal: controller.signal });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    if (typeof data.R !== "number") throw new Error("respuesta inesperada");
+  } catch (err) {
+    console.warn("checkBackendHealth: el backend de Qiskit no respondió como se esperaba —", err.message);
+    els["server-warning"].classList.remove("hidden");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// ---------------------------------------------------------------------
 // INIT
 // ---------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
@@ -825,6 +852,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wire();
   resetRound(CONFIG.levels[state.levelIndex]);
   showScreenEl("screen-start");
+  checkBackendHealth();
   requestAnimationFrame((ts) => {
     lastTs = ts;
     loop(ts);
