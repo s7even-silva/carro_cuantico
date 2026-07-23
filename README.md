@@ -69,7 +69,7 @@ assets/img/   Sprites de los controles (Hadamard, freno, volante)
 | Control | Acción |
 |---|---|
 | **Hadamard** | Enciende el motor, arranca el reloj y revela la pista de obstáculos |
-| **Volante (◀ ▶)** | Gira libre en todo momento — mantenlo presionado para varios carriles |
-| **Freno de mano** | Clic para activar/desactivar el freno (avanza más lento por la pista) |
+| **Freno de mano** | Clic para activar/desactivar el freno (avanza más lento y habilita el volante) |
+| **Volante (◀ ▶)** | Solo gira con el freno activo — mantenlo presionado para varios carriles |
 | **META** | Cruza la meta ahora y mide el resultado (si no, se mide solo al agotarse el tiempo) |
 | **↺ reiniciar** | Reinicia la ronda actual |
