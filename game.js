@@ -3,16 +3,13 @@
    Circuito Cuántico — Nivel 1: Grover / Modo Drift
    =====================================================================
    El juego se conduce entre N carriles (N = 2^n, un carril por posible
-   respuesta). El drift (freno de mano armado + volante) hace lo mismo
-   que antes matemáticamente -- una iteración de Grover en tiempo real,
-   para que el auto y la brújula EXTERNA reaccionen sin esperar red --
-   pero el resultado que de verdad decide la partida sale de Qiskit:
-   al cruzar la meta (o agotarse el tiempo), el navegador le pide a
-   server.py que construya y corra el circuito real (ancilla + oráculo +
-   difusor, backend/grover_qiskit.py) con el número de derrapes que
-   hiciste, y mide de verdad en AerSimulator. No importa el orden ni la
-   forma en que juegues para llegar ahí -- lo que manda es el inicio
-   (Hadamard = H^n real) y el final (medición real).
+   respuesta). El drift (freno de mano armado + volante) aplica una
+   iteración real de Grover sobre las amplitudes (oráculo + difusión) en
+   cada combo, y esas mismas amplitudes son las que se muestrean al
+   cruzar la meta (o agotarse el tiempo) para decidir la medición final
+   -- todo en el cliente, sin backend. No importa el orden ni la forma
+   en que juegues para llegar ahí -- lo que manda es el inicio
+   (Hadamard = H^n real) y el final (medición pesada por |amp|²).
    =====================================================================
    HUECO PARA TU SPRITE DEL VEHÍCULO
    ----------------------------------
@@ -73,8 +70,8 @@ const particles = [];
 let lastTs = performance.now();
 
 // ---------------------------------------------------------------------
-// MATEMÁTICA DE GROVER (para feedback local instantáneo del drift; la
-// medición final SIEMPRE se decide en el backend con Qiskit real)
+// MATEMÁTICA DE GROVER (amplitudes reales; alimentan tanto el drift en
+// vivo como la medición final, todo en el cliente)
 // ---------------------------------------------------------------------
 function hadamardInit() {
   const a = 1 / Math.sqrt(state.N);
@@ -100,8 +97,7 @@ function probabilities() {
   return state.amp.map((v) => v * v);
 }
 
-// R óptimo real (Boyer-Brassard-Høyer-Tapp), la misma fórmula que usa
-// backend/grover_qiskit.py -- así el HUD y el circuito real coinciden.
+// R óptimo real (Boyer-Brassard-Høyer-Tapp).
 function bbhtOptimalIterations(n) {
   const N = 2 ** n;
   const theta = Math.asin(1 / Math.sqrt(N));
@@ -301,80 +297,52 @@ function attemptSteer(dir) {
   }
 }
 
-// Token que identifica la llamada a finishRound() "vigente". Sirve para
-// que una respuesta zombi de un intento viejo (o el watchdog de abajo)
-// no pise el estado de un intento más nuevo si el jugador reintentó.
-let measureToken = 0;
-
-// El resultado real SIEMPRE sale de Qiskit: se le manda a server.py el
-// número de derrapes hechos y arma+corre el circuito de verdad.
-async function finishRound() {
+// La medición final se decide con la misma matemática de Grover que ya
+// se usa para el drift en vivo (state.amp / probabilities()): se toma
+// una muestra pesada por |amp|² de verdad, igual que colapsaría un
+// circuito real. Queda 100% en el cliente para poder jugarse standalone
+// (p.ej. en GitHub Pages, sin ningún backend).
+function finishRound() {
   if (!state.engineOn || state.measuring) return;
   state.measuring = true;
   setControlsEnabled(false);
-  toast("Midiendo con Qiskit…", null);
+  toast("Midiendo…", null);
 
-  const myToken = ++measureToken;
-
-  // fetch() no trae timeout propio. En teoría AbortController debería
-  // bastar, pero si el navegador reutiliza una conexión persistente hacia
-  // un server.py que murió a mitad de camino, hemos visto que el fetch
-  // puede quedar realmente colgado (ni resuelve ni rechaza) incluso
-  // después de controller.abort(). Por eso hay DOS mecanismos: el abort
-  // (intenta cancelar la petición de verdad) y, aparte e independiente,
-  // un watchdog que libera la UI a los 10s pase lo que pase con la
-  // promesa -- el jugador nunca debe quedar atascado en "Midiendo…".
-  const controller = new AbortController();
-  const releaseStuck = (msg) => {
-    if (myToken !== measureToken) return; // ya hubo un intento más nuevo
-    console.warn("finishRound: liberando UI —", msg);
-    toast("No se pudo medir: ¿sigue corriendo 'python server.py'?", "warn");
-    state.measuring = false;
-    setControlsEnabled(true);
+  const probs = probabilities();
+  const measuredIndex = weightedRandomIndex(probs);
+  const targetBits = state.target.toString(2).padStart(state.n, "0");
+  const measuredBits = measuredIndex.toString(2).padStart(state.n, "0");
+  const data = {
+    n: state.n,
+    N: state.N,
+    target_index: state.target,
+    target_bits: targetBits,
+    iterations: state.iterations,
+    measured_index: measuredIndex,
+    measured_bits: measuredBits,
+    success: measuredIndex === state.target,
+    success_probability: probs[state.target],
   };
-  const abortId = setTimeout(() => controller.abort(), 9000);
-  const watchdogId = setTimeout(() => releaseStuck("timeout, la petición nunca resolvió"), 10000);
 
-  try {
-    const resp = await fetch("/api/measure", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ n: state.n, target: state.target, iterations: state.iterations }),
-      signal: controller.signal,
-    });
-    if (myToken !== measureToken) return; // un intento más nuevo ya tomó el control
-    if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({}));
-      throw new Error(errBody.error || `HTTP ${resp.status}`);
-    }
-    const data = await resp.json();
-    clearTimeout(watchdogId);
-    state.measuring = false;
-    state.measuredIndex = data.measured_index;
-    state.laneTarget = data.measured_index; // el auto se desliza al carril medido de verdad
-    setTimeout(() => showResult(data), CONFIG.revealMs);
-  } catch (err) {
-    if (myToken !== measureToken) return;
-    console.error(err);
-    releaseStuck(err.message);
-  } finally {
-    clearTimeout(abortId);
-  }
+  state.measuring = false;
+  state.measuredIndex = measuredIndex;
+  state.laneTarget = measuredIndex; // el auto se desliza al carril medido
+  setTimeout(() => showResult(data), CONFIG.revealMs);
 }
 
 function showResult(data) {
   state.lastWin = data.success;
   const probPct = (data.success_probability * 100).toFixed(0);
 
-  els["result-eyebrow"].textContent = data.success ? "Medición exitosa (Qiskit)" : "Medición fallida (Qiskit)";
+  els["result-eyebrow"].textContent = data.success ? "Medición exitosa" : "Medición fallida";
   els["result-title"].textContent = data.success
     ? `Carril ${data.measured_index + 1} — ¡correcto!`
     : `Carril ${data.measured_index + 1} — no era`;
 
   if (data.success) {
     els["result-text"].textContent =
-      `El circuito real (${data.n} qubits + ancilla, ${data.iterations} iteración(es) de Grover) ` +
-      `colapsó en el carril correcto al medir. Probabilidad de éxito calculada por Qiskit: ${probPct}%.`;
+      `La superposición (${data.n} qubits, ${data.iterations} iteración(es) de Grover) ` +
+      `colapsó en el carril correcto al medir. Probabilidad de éxito: ${probPct}%.`;
   } else {
     const opt = state.optimalIter;
     const tip =
@@ -385,7 +353,7 @@ function showResult(data) {
         : "Mala suerte al medir — con esa probabilidad a veces falla, así es la mecánica cuántica.";
     els["result-text"].textContent =
       `El carril correcto era el ${data.target_index + 1} (bits ${data.target_bits}). ` +
-      `Qiskit corrió el circuito real con ${data.iterations} derrape(s) (óptimo ≈ ${opt}) y midió ${probPct}% ` +
+      `Se hicieron ${data.iterations} derrape(s) (óptimo ≈ ${opt}) y la medición dio ${probPct}% ` +
       `de probabilidad en el carril correcto. ${tip}`;
   }
 
@@ -666,11 +634,8 @@ function loop(ts) {
 
       if (state.engineOn && !state.measuring) {
         const remaining = updateTimerHud();
-        // Se dispara UNA sola vez al agotarse el tiempo. Si el fetch falla
-        // (server.py no corriendo), finishRound() reactiva los controles
-        // para que el jugador reintente a mano -- sin este guard, cada
-        // frame con remaining<=0 volvería a llamar finishRound() y, si
-        // sigue fallando, quedaría reintentando 60 veces por segundo.
+        // Se dispara UNA sola vez al agotarse el tiempo -- sin este guard,
+        // cada frame con remaining<=0 volvería a llamar finishRound().
         if (remaining <= 0 && !state.autoFinishArmed) {
           state.autoFinishArmed = true;
           finishRound();
@@ -678,9 +643,9 @@ function loop(ts) {
       }
 
       renderTrack(trackCtx, els["track-canvas"].clientWidth, els["track-canvas"].clientHeight);
-      // renderTrack() puede disparar finishRound() (async) pero nunca
-      // oculta #game-root de inmediato (el resultado se muestra tras un
-      // setTimeout), así que el compás siempre tiene tamaño válido aquí.
+      // finishRound() nunca oculta #game-root de inmediato (el resultado se
+      // muestra tras un setTimeout), así que el compás siempre tiene tamaño
+      // válido aquí.
       if (state.screen === "game-root") {
         renderCompass(compassCtx, els["compass-canvas"].clientWidth, els["compass-canvas"].clientHeight);
       }
