@@ -12,12 +12,13 @@
    naranja/verde (oráculo/difusor) por cada iteración real. El volante
    solo gira mientras el freno está activo (es un drift real: primero
    frenás, después girás) y el freno puede soltarse solo por chance,
-   obligando a reactivarlo. El juego nunca dice si vas por el carril
-   correcto: solo ves los obstáculos y decides. Cada choque resta una
-   iteración "efectiva" del circuito que de verdad se corre en Qiskit al
-   llegar a la meta o agotarse el tiempo -- esquivar bien importa, pero
-   nunca se muestra un número que delate el carril correcto mientras se
-   juega.
+   obligando a reactivarlo. La brújula externa marca el único carril de
+   victoria (state.target) y se va iluminando a medida que se acerca el
+   resultado final -- pero hay que estar mirando la brújula, no solo la
+   pista, para aprovecharlo a tiempo. Cada choque resta una iteración
+   "efectiva" del circuito que de verdad se corre en Qiskit al llegar a
+   la meta o agotarse el tiempo -- esquivar bien sigue importando de
+   verdad, sea cual sea el carril al que llegues.
    =====================================================================
    SPRITE DEL VEHÍCULO
    --------------------
@@ -608,10 +609,11 @@ function renderTrack(ctx, w, h) {
   }
 }
 
-// Brújula EXTERNA: franja separada de la pista. Nunca indica un carril
-// ni un porcentaje de certeza -- solo se ilumina cada vez más a medida
-// que te acercás al resultado final (meta o se acaba el tiempo), como
-// una tensión ambiental, sin delatar si vas bien o mal.
+// Brújula EXTERNA: franja separada de la pista. Marca un único carril de
+// victoria (state.target) que se va iluminando a medida que te acercás
+// al resultado final (meta o se acaba el tiempo) -- arranca tenue y se
+// enciende de verdad sobre el final, dando una pista real pero que hay
+// que estar mirando la brújula (no la pista) para aprovechar a tiempo.
 function renderCompass(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
   const left = Math.max(24, w * 0.08);
@@ -641,12 +643,14 @@ function renderCompass(ctx, w, h) {
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() / (260 - proximity * 160));
   const glow = state.engineOn ? proximity * (0.5 + 0.5 * pulse) : 0;
 
-  const grad = ctx.createLinearGradient(left, 0, right, 0);
-  grad.addColorStop(0, "rgba(73,211,255,0)");
-  grad.addColorStop(0.5, `rgba(73,211,255,${0.12 + glow * 0.55})`);
-  grad.addColorStop(1, "rgba(73,211,255,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(left, midY - 16, right - left, 32);
+  const tx = laneX(state.target, left, laneW);
+  ctx.beginPath();
+  ctx.arc(tx, midY, 4 + glow * 7, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(255,208,80,${0.2 + glow * 0.75})`;
+  ctx.shadowColor = "rgba(255,208,80,.95)";
+  ctx.shadowBlur = 4 + glow * 24;
+  ctx.fill();
+  ctx.shadowBlur = 0;
 
   ctx.fillStyle = "rgba(255,255,255,.55)";
   ctx.font = MONO;
