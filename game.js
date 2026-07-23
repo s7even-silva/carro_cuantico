@@ -11,13 +11,12 @@
    en que juegues para llegar ahí -- lo que manda es el inicio
    (Hadamard = H^n real) y el final (medición pesada por |amp|²).
    =====================================================================
-   HUECO PARA TU SPRITE DEL VEHÍCULO
-   ----------------------------------
-   No se usa ningún sprite de auto todavía a propósito. Para conectar el
-   tuyo: pon el archivo en assets/img/ y escribe la ruta abajo en
-   CONFIG.carSpriteSrc (vista top-down, apuntando "hacia arriba" en su
-   pose por defecto). El auto se dibuja rotado/reflejado automáticamente
-   según hacia qué carril se mueve. Si lo dejas en null, se usa un auto
+   SPRITE DEL VEHÍCULO
+   --------------------
+   CONFIG.carSpriteSrc apunta a assets/img/car_sprite.png (vista top-down,
+   sin fondo). Se dibuja siempre "de frente" sin rotar -- en la pista de
+   carriles el auto ya mira hacia la meta todo el tiempo, solo cambia de
+   carril (x), nunca de orientación. Si se pone en null, se usa un auto
    de relleno dibujado a mano (drawCarPlaceholder).
    =====================================================================*/
 
@@ -28,7 +27,7 @@ const CONFIG = {
   secondsPerIteration: 3.0,      // presupuesto de tiempo por derrape esperado
   extraBufferIterations: 2,      // margen extra de tiempo sobre el óptimo
   revealMs: 800,                 // pausa visual tras medir antes de mostrar resultado
-  carSpriteSrc: null,            // <-- HUECO: ruta a tu sprite del auto (o null)
+  carSpriteSrc: "assets/img/car_sprite.png",
 };
 
 // ---------------------------------------------------------------------
