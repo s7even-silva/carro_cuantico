@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Circuito Cuántico — Nivel 1: Grover / Modo Drift</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ PANTALLA DE INICIO ============ -->
+  <section id="screen-start" class="screen">
+    <div class="start-card">
+      <p class="eyebrow">Circuito Cuántico · Nivel 1</p>
+      <h1>Modo Drift</h1>
+      <p class="lede">
+        Tu auto cuántico busca una puerta escondida entre otras N idénticas.
+        No sabes cuál es la correcta — pero puedes usar el drift para encontrarla
+        en muchas menos vueltas de las que crees.
+      </p>
+
+      <div class="howto">
+        <div class="howto-row">
+          <img src="assets/img/btn_hadamard_off.png" alt="Botón Hadamard" />
+          <div>
+            <h3>1. Enciende el motor</h3>
+            <p>Pulsa <b>HADAMARD</b> para arrancar. El auto entra en superposición: apunta un poco a todas las puertas a la vez.</p>
+          </div>
+        </div>
+        <div class="howto-row">
+          <img src="assets/img/lever_oraculo_off.png" alt="Freno de mano — oráculo" />
+          <div>
+            <h3>2. El oráculo (freno de mano)</h3>
+            <p>Armarlo solo no mueve nada visible. Marca la puerta correcta en secreto, como una carta boca abajo.</p>
+          </div>
+        </div>
+        <div class="howto-row">
+          <img src="assets/img/wheel_neutro.png" alt="Volante — difusión" />
+          <div>
+            <h3>3. La difusión (volante)</h3>
+            <p>Solo, girar el volante casi no hace nada — de nada sirve nivelar si no marcaste antes.</p>
+          </div>
+        </div>
+        <div class="howto-row combo-row">
+          <div class="combo-icons"><span>🤝</span></div>
+          <div>
+            <h3>4. El combo: derrape</h3>
+            <p><b>Arma el freno de mano y luego gira el volante</b> — ese toque completa el derrape y gira fuerte hacia la puerta correcta.
+            Repite el combo unas <b>√N</b> veces — ni una menos, ni muchas más — y luego acelera hacia la puerta.</p>
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-play" class="btn-primary">Arrancar</button>
+      <p class="fineprint">Controles a los costados. Auto en vista 3D, pista en 2D.</p>
+    </div>
+  </section>
+
+  <!-- ============ JUEGO ============ -->
+  <section id="game-root" class="screen hidden">
+
+    <header class="hud">
+      <div class="hud-block">
+        <span class="hud-label">Puertas (N)</span>
+        <span class="hud-value" id="hud-n">4</span>
+      </div>
+      <div class="hud-block">
+        <span class="hud-label">Derrapes (Grover)</span>
+        <span class="hud-value"><span id="hud-iter">0</span> <span class="hud-dim">/ ~<span id="hud-opt">1</span> óptimo</span></span>
+      </div>
+      <div class="hud-block">
+        <span class="hud-label">Motor</span>
+        <span class="hud-value" id="hud-engine">apagado</span>
+      </div>
+      <button id="btn-restart" class="btn-ghost" title="Reiniciar ronda">↺ reiniciar</button>
+    </header>
+
+    <div class="stage">
+      <canvas id="track-canvas"></canvas>
+      <canvas id="compass-canvas"></canvas>
+      <div id="toast" class="toast"></div>
+    </div>
+
+    <!-- Dock izquierdo: motor + oráculo -->
+    <div class="dock dock-left">
+      <button id="btn-hadamard" class="ctrl ctrl-hadamard" aria-label="Hadamard: encender motor">
+        <img id="img-hadamard" src="assets/img/btn_hadamard_off.png" alt="" />
+        <span class="ctrl-caption">hadamard</span>
+      </button>
+      <button id="btn-handbrake" class="ctrl ctrl-lever" aria-label="Freno de mano: oráculo">
+        <img id="img-lever" src="assets/img/lever_oraculo_off.png" alt="" />
+        <span class="ctrl-caption">freno / oráculo</span>
+      </button>
+    </div>
+
+    <!-- Dock derecho: volante + acelerar -->
+    <div class="dock dock-right">
+      <div class="wheel-wrap">
+        <img id="img-wheel" src="assets/img/wheel_neutro.png" alt="Volante" />
+        <button id="btn-steer-left" class="steer steer-left" aria-label="Girar izquierda">◀</button>
+        <button id="btn-steer-right" class="steer steer-right" aria-label="Girar derecha">▶</button>
+      </div>
+      <button id="btn-accel" class="ctrl ctrl-accel" aria-label="Acelerar / medir">
+        <span class="accel-label">ACELERAR</span>
+        <span class="accel-sub">medir</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- ============ RESULTADO ============ -->
+  <section id="screen-result" class="screen hidden">
+    <div class="start-card result-card">
+      <p class="eyebrow" id="result-eyebrow">Resultado</p>
+      <h1 id="result-title">—</h1>
+      <p class="lede" id="result-text">—</p>
+      <div class="result-actions">
+        <button id="btn-retry" class="btn-ghost">Reintentar (misma N)</button>
+        <button id="btn-next" class="btn-primary">Siguiente →</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script src="game.js"></script>
+</body>
+</html>
