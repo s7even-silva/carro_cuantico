@@ -15,10 +15,12 @@
       <p class="eyebrow">Circuito Cuántico · Nivel 1</p>
       <h1>Modo Drift</h1>
       <p class="lede">
-        Tu auto cuántico arranca entre N carriles. Uno lleva a la meta, los
-        demás no, y no sabes cuál — pero el drift te lo dice en muchas
-        menos vueltas de las que crees. Tienes tiempo límite desde que
-        enciendes el motor: llega al carril correcto antes de cruzar la meta.
+        Tu auto cuántico arranca entre N carriles, y por delante hay una red
+        de obstáculos con la misma cantidad de olas que iteraciones reales
+        tiene el algoritmo de Grover para ese circuito. El juego nunca te
+        dice si vas por el carril correcto — solo ves los obstáculos y
+        decides. Esquívalos como puedas y llega a la meta antes de que se
+        acabe el tiempo.
       </p>
 
       <div class="howto">
@@ -26,30 +28,30 @@
           <img src="assets/img/btn_hadamard_off.png" alt="Botón Hadamard" />
           <div>
             <h3>1. Enciende el motor</h3>
-            <p>Pulsa <b>HADAMARD</b> para arrancar. Empieza el reloj y el auto entra en superposición: flota a medio camino entre todos los carriles.</p>
+            <p>Pulsa <b>HADAMARD</b> para arrancar. Empieza el reloj y aparece la pista de obstáculos.</p>
           </div>
         </div>
         <div class="howto-row">
-          <img src="assets/img/lever_oraculo_off.png" alt="Freno de mano — oráculo" />
+          <img src="assets/img/wheel_neutro.png" alt="Volante" />
           <div>
-            <h3>2. El oráculo (freno de mano)</h3>
-            <p>Armarlo solo no mueve nada visible. Marca el carril correcto en secreto, como una carta boca abajo.</p>
+            <h3>2. El volante gira libre</h3>
+            <p>Sin condiciones ni combos: mantén presionado ◀ o ▶ para deslizarte entre carriles y esquivar lo que venga.</p>
           </div>
         </div>
         <div class="howto-row">
-          <img src="assets/img/wheel_neutro.png" alt="Volante — difusión" />
+          <img src="assets/img/lever_oraculo_off.png" alt="Freno de mano" />
           <div>
-            <h3>3. La difusión (volante)</h3>
-            <p>Solo, girar el volante casi no hace nada — de nada sirve nivelar si no marcaste antes.</p>
+            <h3>3. El freno</h3>
+            <p>Actívalo para avanzar más lento por la pista — más tiempo para reaccionar, pero gastas tu reloj más rápido.</p>
           </div>
         </div>
         <div class="howto-row combo-row">
-          <div class="combo-icons"><span>🤝</span></div>
+          <div class="combo-icons"><span>🚧</span></div>
           <div>
-            <h3>4. El combo: derrape</h3>
-            <p><b>Arma el freno de mano y luego gira el volante</b> — ese toque completa el derrape y desliza fuerte hacia el carril correcto.
-            Mira la <b>brújula externa</b> (arriba de la pista): te dice qué tan "caliente" está tu carril actual.
-            Repite el combo unas <b>√N</b> veces y cruza la meta antes de que se acabe el tiempo.</p>
+            <h3>4. Cada choque cuenta</h3>
+            <p>Chocar un obstáculo le resta una iteración real al circuito que corre Qiskit al medir — nunca vas a ver un número
+            que te diga si vas bien, pero esquivar limpio importa de verdad. La <b>brújula externa</b> (arriba de la pista) solo se
+            va iluminando a medida que se acerca el resultado final.</p>
           </div>
         </div>
       </div>
@@ -68,8 +70,8 @@
         <span class="hud-value" id="hud-n">4</span>
       </div>
       <div class="hud-block">
-        <span class="hud-label">Derrapes (Grover)</span>
-        <span class="hud-value"><span id="hud-iter">0</span> <span class="hud-dim">/ ~<span id="hud-opt">1</span> óptimo</span></span>
+        <span class="hud-label">Choques</span>
+        <span class="hud-value"><span id="hud-iter">0</span> <span class="hud-dim">/ R≈<span id="hud-opt">1</span></span></span>
       </div>
       <div class="hud-block">
         <span class="hud-label">Motor</span>
@@ -89,15 +91,15 @@
       <div id="toast" class="toast"></div>
     </div>
 
-    <!-- Dock izquierdo: motor + oráculo -->
+    <!-- Dock izquierdo: motor + freno -->
     <div class="dock dock-left">
       <button id="btn-hadamard" class="ctrl ctrl-hadamard" aria-label="Hadamard: encender motor">
         <img id="img-hadamard" src="assets/img/btn_hadamard_off.png" alt="" />
         <span class="ctrl-caption">hadamard</span>
       </button>
-      <button id="btn-handbrake" class="ctrl ctrl-lever" aria-label="Freno de mano: oráculo">
+      <button id="btn-handbrake" class="ctrl ctrl-lever" aria-label="Freno: avanza más lento">
         <img id="img-lever" src="assets/img/lever_oraculo_off.png" alt="" />
-        <span class="ctrl-caption">freno / oráculo</span>
+        <span class="ctrl-caption">freno</span>
       </button>
     </div>
 

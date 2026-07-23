@@ -267,10 +267,10 @@ html,body{
           drop-shadow(0 0 8px rgba(73,211,255,.9))
           drop-shadow(0 0 18px rgba(73,211,255,.55));
 }
-.ctrl-lever.armed img{
+.ctrl-lever.braking img{
   filter: drop-shadow(0 6px 12px rgba(0,0,0,.55))
-          drop-shadow(0 0 8px rgba(52,224,122,.9))
-          drop-shadow(0 0 18px rgba(52,224,122,.55));
+          drop-shadow(0 0 8px rgba(255,181,69,.9))
+          drop-shadow(0 0 18px rgba(255,181,69,.55));
 }
 .ctrl-lever:disabled img, .ctrl-hadamard:disabled img{
   filter: grayscale(.6) brightness(.7) drop-shadow(0 6px 12px rgba(0,0,0,.4));
