@@ -1,25 +1,37 @@
 "use strict";
 /* =====================================================================
    Circuito Cuántico — Nivel 1: Grover / Modo Drift
-   Simulación real de una iteración de Grover (oráculo + difusión)
-   manejada como mecánica de derrape de auto.
+   =====================================================================
+   El juego se conduce entre N carriles (N = 2^n, un carril por posible
+   respuesta). El drift (freno de mano armado + volante) hace lo mismo
+   que antes matemáticamente -- una iteración de Grover en tiempo real,
+   para que el auto y la brújula EXTERNA reaccionen sin esperar red --
+   pero el resultado que de verdad decide la partida sale de Qiskit:
+   al cruzar la meta (o agotarse el tiempo), el navegador le pide a
+   server.py que construya y corra el circuito real (ancilla + oráculo +
+   difusor, backend/grover_qiskit.py) con el número de derrapes que
+   hiciste, y mide de verdad en AerSimulator. No importa el orden ni la
+   forma en que juegues para llegar ahí -- lo que manda es el inicio
+   (Hadamard = H^n real) y el final (medición real).
    =====================================================================
    HUECO PARA TU SPRITE DEL VEHÍCULO
    ----------------------------------
    No se usa ningún sprite de auto todavía a propósito. Para conectar el
-   tuyo: pon el archivo en assets/img/ (ideal: vista top-down, apuntando
-   "hacia arriba" en su pose por defecto) y escribe la ruta abajo en
-   CONFIG.carSpriteSrc. El auto se dibuja rotado automáticamente según
-   hacia dónde apunta (drawCar / carSprite.onload). Si lo dejas en null,
-   se usa un auto de relleno dibujado a mano (drawCarPlaceholder).
+   tuyo: pon el archivo en assets/img/ y escribe la ruta abajo en
+   CONFIG.carSpriteSrc (vista top-down, apuntando "hacia arriba" en su
+   pose por defecto). El auto se dibuja rotado/reflejado automáticamente
+   según hacia qué carril se mueve. Si lo dejas en null, se usa un auto
+   de relleno dibujado a mano (drawCarPlaceholder).
    =====================================================================*/
 
 const CONFIG = {
-  levels: [4, 8, 16],           // progresión de N (Nivel 1)
-  comboCooldown: 650,           // ms entre iteraciones de Grover (derrapes)
-  headingLerpRate: 5.5,         // qué tan rápido gira el auto hacia el rumbo
-  accelDuration: 850,           // ms de animación al acelerar / medir
-  carSpriteSrc: null,           // <-- HUECO: ruta a tu sprite del auto (o null)
+  levels: [2, 3, 4],             // n = qubits por nivel -> N = 2^n carriles
+  comboCooldown: 550,            // ms entre iteraciones de Grover (derrapes)
+  laneLerpRate: 6.5,             // qué tan rápido desliza el auto entre carriles
+  secondsPerIteration: 3.0,      // presupuesto de tiempo por derrape esperado
+  extraBufferIterations: 2,      // margen extra de tiempo sobre el óptimo
+  revealMs: 800,                 // pausa visual tras medir antes de mostrar resultado
+  carSpriteSrc: null,            // <-- HUECO: ruta a tu sprite del auto (o null)
 };
 
 // ---------------------------------------------------------------------
@@ -28,25 +40,32 @@ const CONFIG = {
 const state = {
   screen: "start",     // start | game-root | result
   levelIndex: 0,
+  n: 2,
   N: 4,
   target: 0,
   amp: [],
   engineOn: false,
   iterations: 0,
   optimalIter: 1,
-  // El freno de mano es un interruptor de "armado" (click para activar/
-  // desactivar), no algo que se sostiene: con mouse real solo hay un
-  // cursor, así que "sostener freno + volante" a la vez es imposible de
-  // probar/jugar. Armado + un toque de volante = combo (derrape).
+
+  // Freno de mano = interruptor "armar oráculo" (click), no algo que se
+  // sostiene: con mouse solo hay un cursor, y en pantalla táctil pedir
+  // que un dedo se quede quieto en el borde mientras el otro juega es
+  // frágil. Clic para armar, clic de nuevo para desarmar.
   oracleArmed: false,
   comboHappenedThisArm: false,
   comboCooldownUntil: 0,
-  carHeading: -Math.PI / 2,
-  carHeadingTarget: -Math.PI / 2,
-  driftFlashUntil: 0,
-  accelerating: false,
-  accelStart: 0,
-  measuredGate: null,
+
+  lanePos: 1.5,          // posición continua actual del auto (para animar)
+  laneTarget: 1.5,
+
+  timeLimitMs: 0,
+  roundDeadline: 0,
+  measuring: false,
+  autoFinishArmed: false,
+
+  measuredIndex: null,
+  lastWin: null,
 };
 
 const hints = { steerAlone: false, handbrakeAlone: false };
@@ -54,17 +73,16 @@ const particles = [];
 let lastTs = performance.now();
 
 // ---------------------------------------------------------------------
-// MATEMÁTICA DE GROVER
+// MATEMÁTICA DE GROVER (para feedback local instantáneo del drift; la
+// medición final SIEMPRE se decide en el backend con Qiskit real)
 // ---------------------------------------------------------------------
-function gateAngle(i) {
-  return -Math.PI / 2 + i * ((2 * Math.PI) / state.N);
-}
-
 function hadamardInit() {
   const a = 1 / Math.sqrt(state.N);
   state.amp = new Array(state.N).fill(a);
   state.engineOn = true;
   state.iterations = 0;
+  state.timeLimitMs = (state.optimalIter + CONFIG.extraBufferIterations) * CONFIG.secondsPerIteration * 1000;
+  state.roundDeadline = performance.now() + state.timeLimitMs;
   setControlsEnabled(true);
   toast("Motor encendido — superposición uniforme creada.", "good");
 }
@@ -82,34 +100,26 @@ function probabilities() {
   return state.amp.map((v) => v * v);
 }
 
-// Nº de derrapes (iteraciones de Grover) que maximiza la probabilidad,
-// calculado simulando la recurrencia real en vez de una fórmula cerrada
-// (la fórmula π/4·√N es solo asintótica y falla para N pequeño, p.ej. N=4
-// necesita exactamente 1 iteración para 100%, no 2).
-function computeOptimalIter(N) {
-  let amp = new Array(N).fill(1 / Math.sqrt(N));
-  let bestK = 0, bestP = amp[0] * amp[0];
-  const cap = Math.ceil((Math.PI / 2) * Math.sqrt(N)) + 3;
-  for (let k = 1; k <= cap; k++) {
-    amp[0] *= -1;
-    const mean = amp.reduce((s, v) => s + v, 0) / N;
-    amp = amp.map((v) => 2 * mean - v);
-    const p = amp[0] * amp[0];
-    if (p > bestP) { bestP = p; bestK = k; } else break;
-  }
-  return Math.max(1, bestK);
+// R óptimo real (Boyer-Brassard-Høyer-Tapp), la misma fórmula que usa
+// backend/grover_qiskit.py -- así el HUD y el circuito real coinciden.
+function bbhtOptimalIterations(n) {
+  const N = 2 ** n;
+  const theta = Math.asin(1 / Math.sqrt(N));
+  const R = Math.round(Math.PI / 4 / theta - 0.5);
+  return Math.max(1, R);
 }
 
-function resultantVector() {
+function resultantLane() {
   const probs = probabilities();
-  let x = 0,
-    y = 0;
+  let avg = 0;
+  let maxP = 0;
   for (let i = 0; i < state.N; i++) {
-    const ang = gateAngle(i);
-    x += probs[i] * Math.cos(ang);
-    y += probs[i] * Math.sin(ang);
+    avg += i * probs[i];
+    if (probs[i] > maxP) maxP = probs[i];
   }
-  return { x, y, angle: Math.atan2(y, x), mag: Math.hypot(x, y) };
+  const floor = 1 / state.N;
+  const certainty = Math.max(0, (maxP - floor) / (1 - floor || 1));
+  return { lane: avg, certainty };
 }
 
 function weightedRandomIndex(weights) {
@@ -136,6 +146,7 @@ function cacheEls() {
     "btn-steer-left", "btn-steer-right", "img-wheel",
     "btn-accel",
     "hud-n", "hud-iter", "hud-opt", "hud-engine",
+    "hud-timer-fill", "hud-timer-label",
     "toast",
     "result-eyebrow", "result-title", "result-text",
     "track-canvas", "compass-canvas",
@@ -178,6 +189,20 @@ function updateHud() {
   els["hud-engine"].textContent = state.engineOn ? "encendido" : "apagado";
 }
 
+function updateTimerHud() {
+  if (!state.engineOn) {
+    els["hud-timer-fill"].style.width = "0%";
+    els["hud-timer-label"].textContent = "--";
+    return;
+  }
+  const remaining = Math.max(0, state.roundDeadline - performance.now());
+  const frac = state.timeLimitMs > 0 ? remaining / state.timeLimitMs : 0;
+  els["hud-timer-fill"].style.width = `${(frac * 100).toFixed(1)}%`;
+  els["hud-timer-fill"].classList.toggle("low", frac < 0.25);
+  els["hud-timer-label"].textContent = `${(remaining / 1000).toFixed(1)}s`;
+  return remaining;
+}
+
 function updateControlVisuals() {
   els["img-hadamard"].src = state.engineOn
     ? "assets/img/btn_hadamard_on.png"
@@ -210,25 +235,30 @@ function flashWheel(dir) {
 // ---------------------------------------------------------------------
 // FLUJO DE RONDA / NIVEL
 // ---------------------------------------------------------------------
-function resetRound(N) {
-  state.N = N;
-  state.target = Math.floor(Math.random() * N);
-  state.amp = new Array(N).fill(0);
+function resetRound(n) {
+  state.n = n;
+  state.N = 2 ** n;
+  state.target = Math.floor(Math.random() * state.N);
+  state.amp = new Array(state.N).fill(0);
   state.engineOn = false;
   state.iterations = 0;
-  state.optimalIter = computeOptimalIter(N);
+  state.optimalIter = bbhtOptimalIterations(n);
   state.oracleArmed = false;
   state.comboHappenedThisArm = false;
   state.comboCooldownUntil = 0;
-  state.carHeading = -Math.PI / 2;
-  state.carHeadingTarget = -Math.PI / 2;
-  state.accelerating = false;
-  state.measuredGate = null;
+  state.lanePos = (state.N - 1) / 2;
+  state.laneTarget = state.lanePos;
+  state.timeLimitMs = 0;
+  state.roundDeadline = 0;
+  state.measuring = false;
+  state.autoFinishArmed = false;
+  state.measuredIndex = null;
   particles.length = 0;
 
   setControlsEnabled(false);
   setWheelVisual(0);
   updateHud();
+  updateTimerHud();
   updateControlVisuals();
 }
 
@@ -240,7 +270,7 @@ function nextLevelAvailable() {
 // Si el oráculo está armado, ese toque completa el combo (derrape real:
 // oráculo + difusión = una iteración de Grover). Si no, es cosmético.
 function attemptSteer(dir) {
-  if (!state.engineOn || state.accelerating) return;
+  if (!state.engineOn || state.measuring) return;
   flashWheel(dir);
 
   if (!state.oracleArmed) {
@@ -261,66 +291,108 @@ function attemptSteer(dir) {
   spawnSkid(dir);
   updateHud();
 
-  const res = resultantVector();
-  if (res.mag > 0.05) state.carHeadingTarget = res.angle;
+  const res = resultantLane();
+  state.laneTarget = res.lane;
 
   if (state.iterations === state.optimalIter) {
-    const p = Math.max(...probabilities());
-    toast(`Alineado — probabilidad ≈ ${(p * 100).toFixed(0)}%. ¡Acelera!`, "good");
+    toast(`Alineado — certeza ≈ ${(res.certainty * 100).toFixed(0)}%. ¡Cruza la meta!`, "good");
   } else if (state.iterations > state.optimalIter) {
-    toast("Te pasaste de vueltas: la probabilidad ya está bajando.", "warn");
+    toast("Te pasaste de vueltas: la certeza ya está bajando.", "warn");
   }
 }
 
-function accelerate() {
-  if (!state.engineOn || state.accelerating) return;
-  const probs = probabilities();
-  const measured = weightedRandomIndex(probs);
-  state.measuredGate = measured;
-  state.accelerating = true;
-  state.accelStart = performance.now();
-  state.carHeadingTarget = gateAngle(measured);
-  if (state.iterations === 0) {
-    toast("Midiendo sin derrapes: todas las puertas son igual de probables.", "warn");
-  } else {
-    toast("Midiendo…", null);
+// Token que identifica la llamada a finishRound() "vigente". Sirve para
+// que una respuesta zombi de un intento viejo (o el watchdog de abajo)
+// no pise el estado de un intento más nuevo si el jugador reintentó.
+let measureToken = 0;
+
+// El resultado real SIEMPRE sale de Qiskit: se le manda a server.py el
+// número de derrapes hechos y arma+corre el circuito de verdad.
+async function finishRound() {
+  if (!state.engineOn || state.measuring) return;
+  state.measuring = true;
+  setControlsEnabled(false);
+  toast("Midiendo con Qiskit…", null);
+
+  const myToken = ++measureToken;
+
+  // fetch() no trae timeout propio. En teoría AbortController debería
+  // bastar, pero si el navegador reutiliza una conexión persistente hacia
+  // un server.py que murió a mitad de camino, hemos visto que el fetch
+  // puede quedar realmente colgado (ni resuelve ni rechaza) incluso
+  // después de controller.abort(). Por eso hay DOS mecanismos: el abort
+  // (intenta cancelar la petición de verdad) y, aparte e independiente,
+  // un watchdog que libera la UI a los 10s pase lo que pase con la
+  // promesa -- el jugador nunca debe quedar atascado en "Midiendo…".
+  const controller = new AbortController();
+  const releaseStuck = (msg) => {
+    if (myToken !== measureToken) return; // ya hubo un intento más nuevo
+    console.warn("finishRound: liberando UI —", msg);
+    toast("No se pudo medir: ¿sigue corriendo 'python server.py'?", "warn");
+    state.measuring = false;
+    setControlsEnabled(true);
+  };
+  const abortId = setTimeout(() => controller.abort(), 9000);
+  const watchdogId = setTimeout(() => releaseStuck("timeout, la petición nunca resolvió"), 10000);
+
+  try {
+    const resp = await fetch("/api/measure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ n: state.n, target: state.target, iterations: state.iterations }),
+      signal: controller.signal,
+    });
+    if (myToken !== measureToken) return; // un intento más nuevo ya tomó el control
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      throw new Error(errBody.error || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    clearTimeout(watchdogId);
+    state.measuring = false;
+    state.measuredIndex = data.measured_index;
+    state.laneTarget = data.measured_index; // el auto se desliza al carril medido de verdad
+    setTimeout(() => showResult(data), CONFIG.revealMs);
+  } catch (err) {
+    if (myToken !== measureToken) return;
+    console.error(err);
+    releaseStuck(err.message);
+  } finally {
+    clearTimeout(abortId);
   }
 }
 
-function resolveMeasurement() {
-  state.accelerating = false;
-  const win = state.measuredGate === state.target;
-  showResult(win);
-}
+function showResult(data) {
+  state.lastWin = data.success;
+  const probPct = (data.success_probability * 100).toFixed(0);
 
-function showResult(win) {
-  state.lastWin = win;
-  const probPct = (probabilities()[state.measuredGate] * 100).toFixed(0);
-  els["result-eyebrow"].textContent = win ? "Medición exitosa" : "Medición fallida";
-  els["result-title"].textContent = win
-    ? `Puerta ${state.measuredGate + 1} — ¡correcta!`
-    : `Puerta ${state.measuredGate + 1} — no era`;
+  els["result-eyebrow"].textContent = data.success ? "Medición exitosa (Qiskit)" : "Medición fallida (Qiskit)";
+  els["result-title"].textContent = data.success
+    ? `Carril ${data.measured_index + 1} — ¡correcto!`
+    : `Carril ${data.measured_index + 1} — no era`;
 
-  if (win) {
+  if (data.success) {
     els["result-text"].textContent =
-      `Colapsaste el estado en la puerta correcta tras ${state.iterations} derrape(s) ` +
-      `(óptimo ≈ ${state.optimalIter} para N=${state.N}). Probabilidad al medir: ${probPct}%.`;
+      `El circuito real (${data.n} qubits + ancilla, ${data.iterations} iteración(es) de Grover) ` +
+      `colapsó en el carril correcto al medir. Probabilidad de éxito calculada por Qiskit: ${probPct}%.`;
   } else {
+    const opt = state.optimalIter;
     const tip =
-      state.iterations > state.optimalIter
-        ? "Te pasaste de vueltas — la probabilidad ya iba de bajada."
-        : state.iterations < state.optimalIter
-        ? "Faltaron derrapes: la probabilidad todavía no se concentraba en una puerta."
-        : "Mala suerte en la medición — con esa probabilidad a veces falla.";
+      data.iterations > opt
+        ? "Te pasaste de derrapes — la probabilidad ya iba de bajada."
+        : data.iterations < opt
+        ? "Faltaron derrapes: la probabilidad todavía no se concentraba en un carril."
+        : "Mala suerte al medir — con esa probabilidad a veces falla, así es la mecánica cuántica.";
     els["result-text"].textContent =
-      `La puerta correcta era la ${state.target + 1}. Mediste con ${state.iterations} derrape(s) ` +
-      `(óptimo ≈ ${state.optimalIter}) y ${probPct}% de probabilidad en la puerta ${state.measuredGate + 1}. ${tip}`;
+      `El carril correcto era el ${data.target_index + 1} (bits ${data.target_bits}). ` +
+      `Qiskit corrió el circuito real con ${data.iterations} derrape(s) (óptimo ≈ ${opt}) y midió ${probPct}% ` +
+      `de probabilidad en el carril correcto. ${tip}`;
   }
 
-  els["btn-next"].textContent = win
+  els["btn-next"].textContent = data.success
     ? nextLevelAvailable()
-      ? "Siguiente puerta →"
-      : "Jugar de nuevo (N=4)"
+      ? "Siguiente nivel →"
+      : "Jugar de nuevo (nivel 1)"
     : "Reintentar";
 
   showScreenEl("screen-result");
@@ -331,7 +403,7 @@ function showResult(win) {
 // ---------------------------------------------------------------------
 function spawnSkid(dir) {
   for (let i = 0; i < 10; i++) {
-    const a = state.carHeading + Math.PI + (Math.random() - 0.5) * 1.4 - dir * 0.3;
+    const a = Math.PI / 2 + (Math.random() - 0.5) * 1.2 - dir * 0.4;
     const speed = 40 + Math.random() * 60;
     particles.push({
       x: 0, y: 0,
@@ -389,10 +461,10 @@ function drawCarPlaceholder(ctx, scale) {
   ctx.restore();
 }
 
-function drawCar(ctx, x, y, heading, alpha) {
+// El auto siempre "mira" hacia la meta (arriba); solo cambiamos su x.
+function drawCar(ctx, x, y, alpha) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(heading + Math.PI / 2);
   ctx.globalAlpha = alpha;
   if (carSprite && carSprite.complete && carSprite.naturalWidth) {
     const s = 34 / carSprite.naturalWidth;
@@ -409,74 +481,90 @@ function drawCar(ctx, x, y, heading, alpha) {
   ctx.restore();
 }
 
-function drawGate(ctx, cx, cy, R, i) {
-  const ang = gateAngle(i);
-  const x = cx + Math.cos(ang) * R;
-  const y = cy + Math.sin(ang) * R;
+function laneX(i, left, laneW) {
+  return left + (i + 0.5) * laneW;
+}
 
-  let fill = "rgba(35,38,44,.92)";
-  let stroke = "rgba(255,255,255,.22)";
-  if (state.measuredGate === i && state.screen === "screen-result") {
-    fill = i === state.target ? "rgba(52,224,122,.9)" : "rgba(255,90,90,.9)";
-    stroke = "#fff";
-  }
+function trackGeometry(w, h) {
+  const left = Math.max(24, w * 0.08);
+  const right = w - left;
+  const laneW = (right - left) / state.N;
+  const metaY = h * 0.16;
+  const startY = h * 0.86;
+  return { left, right, laneW, metaY, startY };
+}
 
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(ang + Math.PI / 2);
-  ctx.fillStyle = fill;
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = 2;
-  roundRectPath(ctx, -16, -7, 32, 14, 4);
-  ctx.fill(); ctx.stroke();
-  ctx.restore();
-
-  ctx.fillStyle = "rgba(255,255,255,.6)";
-  ctx.font = MONO;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(String(i + 1), x, y);
+function timeProgress() {
+  if (!state.engineOn) return 0;
+  if (state.measuring || state.screen !== "game-root") return 1;
+  const remaining = Math.max(0, state.roundDeadline - performance.now());
+  return state.timeLimitMs > 0 ? 1 - remaining / state.timeLimitMs : 0;
 }
 
 function renderTrack(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
-  const cx = w / 2, cy = h / 2 + 6;
-  const R = Math.min(w, h) * 0.36;
+  const { left, right, laneW, metaY, startY } = trackGeometry(w, h);
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(207,214,224,.16)";
-  ctx.lineWidth = 3;
-  ctx.setLineDash([9, 11]);
-  ctx.stroke();
+  // asfalto
+  ctx.fillStyle = "rgba(255,255,255,.02)";
+  ctx.fillRect(left, metaY, right - left, startY - metaY);
+
+  // carriles
+  for (let i = 0; i <= state.N; i++) {
+    const x = left + i * laneW;
+    ctx.beginPath();
+    ctx.moveTo(x, metaY);
+    ctx.lineTo(x, startY);
+    ctx.strokeStyle = "rgba(207,214,224,.16)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 10]);
+    ctx.stroke();
+  }
   ctx.setLineDash([]);
 
+  // meta
+  ctx.beginPath();
+  ctx.moveTo(left, metaY);
+  ctx.lineTo(right, metaY);
+  ctx.strokeStyle = "rgba(52,224,122,.55)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(52,224,122,.85)";
+  ctx.font = MONO;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillText("META", (left + right) / 2, metaY - 6);
+
+  // números de carril
+  ctx.fillStyle = "rgba(255,255,255,.4)";
+  ctx.textBaseline = "top";
+  for (let i = 0; i < state.N; i++) {
+    ctx.fillText(String(i + 1), laneX(i, left, laneW), startY + 8);
+  }
+
+  // resaltar carril correcto/medido al revelar resultado
+  if (state.measuredIndex !== null && (state.screen === "screen-result" || state.measuring)) {
+    const ok = state.measuredIndex === state.target;
+    ctx.fillStyle = ok ? "rgba(52,224,122,.18)" : "rgba(255,90,90,.18)";
+    ctx.fillRect(left + state.measuredIndex * laneW, metaY, laneW, startY - metaY);
+  }
+
+  // fantasmas de superposición
   const probs = probabilities();
   if (state.engineOn) {
     for (let i = 0; i < state.N; i++) {
       const p = probs[i];
-      if (p < 0.008) continue;
-      const ang = gateAngle(i);
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.cos(ang) * R, cy + Math.sin(ang) * R);
-      ctx.strokeStyle = `rgba(73,211,255,${Math.min(0.55, p * 1.3)})`;
-      ctx.lineWidth = 1.5 + p * 9;
-      ctx.stroke();
+      if (p < 0.01) continue;
+      const gx = laneX(i, left, laneW);
+      const gy = startY - (startY - metaY) * 0.15;
+      drawCar(ctx, gx, gy, Math.min(0.7, p * 1.4));
     }
   }
 
-  for (let i = 0; i < state.N; i++) drawGate(ctx, cx, cy, R, i);
-
-  let carX = cx, carY = cy;
-  if (state.accelerating) {
-    const t = Math.min(1, (performance.now() - state.accelStart) / CONFIG.accelDuration);
-    const te = t * t * (3 - 2 * t);
-    const ang = gateAngle(state.measuredGate);
-    carX = cx + Math.cos(ang) * R * te;
-    carY = cy + Math.sin(ang) * R * te;
-    if (t >= 1) resolveMeasurement();
-  }
+  // auto principal
+  const progress = timeProgress();
+  const carY = startY - (startY - metaY) * progress;
+  const carX = laneX(state.lanePos, left, laneW);
 
   ctx.save();
   ctx.translate(carX, carY);
@@ -492,58 +580,55 @@ function renderTrack(ctx, w, h) {
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  drawCar(ctx, carX, carY, state.carHeading, state.engineOn ? 1 : 0.85);
+  drawCar(ctx, carX, carY, state.engineOn ? 1 : 0.85);
 }
 
+// Brújula EXTERNA: franja horizontal separada de la pista, indica hacia
+// qué carril apunta la evidencia acumulada y qué tan fuerte es la señal
+// (no la posición real y secreta del objetivo -- la certeza que da el
+// propio derrape, igual que en la teoría: la amplitud, no el bit).
 function renderCompass(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
-  const cx = w / 2, cy = h / 2, R = Math.max(1, Math.min(w, h) / 2 - 10);
-  const probs = probabilities();
-
-  for (let i = 0; i < state.N; i++) {
-    const ang = gateAngle(i);
-    const p = probs[i] || 0;
-    const x1 = cx + Math.cos(ang) * (R - 7), y1 = cy + Math.sin(ang) * (R - 7);
-    const x2 = cx + Math.cos(ang) * R, y2 = cy + Math.sin(ang) * R;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-    ctx.strokeStyle = `rgba(73,211,255,${0.25 + p * 0.85})`;
-    ctx.lineWidth = 1.4 + p * 4;
-    ctx.stroke();
-  }
+  const left = Math.max(24, w * 0.08);
+  const right = w - left;
+  const laneW = (right - left) / state.N;
+  const midY = h / 2;
 
   ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(255,255,255,.15)";
-  ctx.lineWidth = 1;
+  ctx.moveTo(left, midY);
+  ctx.lineTo(right, midY);
+  ctx.strokeStyle = "rgba(255,255,255,.14)";
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(255,255,255,.45)";
-  ctx.font = "600 9px Consolas, monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("N", cx, cy - R + 9);
-
-  const res = resultantVector();
-  const mag = Math.min(1, res.mag);
-  if (mag > 0.03) {
-    const nx = cx + Math.cos(res.angle) * R * 0.72 * mag;
-    const ny = cy + Math.sin(res.angle) * R * 0.72 * mag;
+  for (let i = 0; i <= state.N; i++) {
+    const x = left + i * laneW;
     ctx.beginPath();
-    ctx.moveTo(cx, cy); ctx.lineTo(nx, ny);
-    ctx.strokeStyle = "#49d3ff";
-    ctx.lineWidth = 2.5;
+    ctx.moveTo(x, midY - 6);
+    ctx.lineTo(x, midY + 6);
+    ctx.strokeStyle = "rgba(255,255,255,.2)";
+    ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(nx, ny, 3, 0, Math.PI * 2);
-    ctx.fillStyle = "#49d3ff";
-    ctx.fill();
   }
 
+  const res = resultantLane();
+  const nx = laneX(res.lane, left, laneW);
+  const glow = 0.25 + res.certainty * 0.75;
+
   ctx.beginPath();
-  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-  ctx.fillStyle = state.engineOn ? "#34e07a" : "#555";
+  ctx.arc(nx, midY, 5 + res.certainty * 5, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(73,211,255,${glow})`;
+  ctx.shadowColor = "rgba(73,211,255,.9)";
+  ctx.shadowBlur = 8 + res.certainty * 18;
   ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "rgba(255,255,255,.6)";
+  ctx.font = MONO;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const label = res.certainty < 0.15 ? "frío" : res.certainty < 0.5 ? "tibio" : res.certainty < 0.85 ? "caliente" : "¡ahí!";
+  ctx.fillText(`brújula externa · ${(res.certainty * 100).toFixed(0)}% certeza · ${label}`, left, 14);
 }
 
 // ---------------------------------------------------------------------
@@ -563,10 +648,8 @@ function setupCanvas(canvas) {
   return { ctx, resize };
 }
 
-function lerpAngle(a, b, t) {
-  let diff = ((b - a + Math.PI) % (2 * Math.PI)) - Math.PI;
-  if (diff < -Math.PI) diff += 2 * Math.PI;
-  return a + diff * t;
+function lerp(a, b, t) {
+  return a + (b - a) * t;
 }
 
 let trackCtx, compassCtx, resizeTrackCanvas, resizeCompassCanvas;
@@ -578,14 +661,26 @@ function loop(ts) {
   try {
     if (state.screen === "game-root") {
       updateParticles(dt);
-      const rate = 1 - Math.exp(-CONFIG.headingLerpRate * dt);
-      state.carHeading = lerpAngle(state.carHeading, state.carHeadingTarget, rate);
+      const rate = 1 - Math.exp(-CONFIG.laneLerpRate * dt);
+      state.lanePos = lerp(state.lanePos, state.laneTarget, rate);
+
+      if (state.engineOn && !state.measuring) {
+        const remaining = updateTimerHud();
+        // Se dispara UNA sola vez al agotarse el tiempo. Si el fetch falla
+        // (server.py no corriendo), finishRound() reactiva los controles
+        // para que el jugador reintente a mano -- sin este guard, cada
+        // frame con remaining<=0 volvería a llamar finishRound() y, si
+        // sigue fallando, quedaría reintentando 60 veces por segundo.
+        if (remaining <= 0 && !state.autoFinishArmed) {
+          state.autoFinishArmed = true;
+          finishRound();
+        }
+      }
 
       renderTrack(trackCtx, els["track-canvas"].clientWidth, els["track-canvas"].clientHeight);
-      // renderTrack() puede disparar la resolución de una medición a mitad
-      // de frame (resolveMeasurement -> showResult -> oculta #game-root),
-      // lo que deja el canvas del compás en 0x0 justo aquí: hay que
-      // re-chequear la pantalla antes de dibujarlo.
+      // renderTrack() puede disparar finishRound() (async) pero nunca
+      // oculta #game-root de inmediato (el resultado se muestra tras un
+      // setTimeout), así que el compás siempre tiene tamaño válido aquí.
       if (state.screen === "game-root") {
         renderCompass(compassCtx, els["compass-canvas"].clientWidth, els["compass-canvas"].clientHeight);
       }
@@ -605,17 +700,14 @@ function wire() {
   els["btn-play"].addEventListener("click", () => showScreenEl("game-root"));
 
   els["btn-hadamard"].addEventListener("click", () => {
+    if (state.engineOn) return;
     hadamardInit();
     updateControlVisuals();
     updateHud();
   });
 
-  // Freno de mano = interruptor "armar oráculo" (click), no algo que se
-  // sostiene: con mouse solo hay un cursor, y en pantalla táctil pedir que
-  // un dedo se quede quieto en un botón del borde mientras el otro juega
-  // es frágil. Clic para armar, clic de nuevo para desarmar.
   els["btn-handbrake"].addEventListener("click", () => {
-    if (!state.engineOn) return;
+    if (!state.engineOn || state.measuring) return;
     state.oracleArmed = !state.oracleArmed;
     if (state.oracleArmed) {
       state.comboHappenedThisArm = false;
@@ -629,12 +721,12 @@ function wire() {
   els["btn-steer-left"].addEventListener("click", () => attemptSteer(-1));
   els["btn-steer-right"].addEventListener("click", () => attemptSteer(1));
 
-  els["btn-accel"].addEventListener("click", accelerate);
+  els["btn-accel"].addEventListener("click", finishRound);
 
-  els["btn-restart"].addEventListener("click", () => resetRound(state.N));
+  els["btn-restart"].addEventListener("click", () => resetRound(state.n));
 
   els["btn-retry"].addEventListener("click", () => {
-    resetRound(state.N);
+    resetRound(state.n);
     showScreenEl("game-root");
   });
 
@@ -648,7 +740,6 @@ function wire() {
     resetRound(CONFIG.levels[state.levelIndex]);
     showScreenEl("game-root");
   });
-
 }
 
 // ---------------------------------------------------------------------
