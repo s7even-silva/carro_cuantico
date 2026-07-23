@@ -47,26 +47,6 @@ html,body{
 
 .hidden{ display:none !important; }
 
-.server-warning{
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  z-index: 100;
-  background: linear-gradient(180deg, #4a1414, #2c0d0d);
-  border-bottom: 2px solid var(--danger);
-  color: #ffd9d9;
-  font-family: var(--font-mono);
-  font-size: .82rem;
-  line-height: 1.5;
-  padding: 10px 16px;
-  text-align: center;
-}
-.server-warning code{
-  background: rgba(0,0,0,.35);
-  border-radius: 4px;
-  padding: 1px 6px;
-  color: #ffb545;
-}
-
 /* ---------------- pantallas tipo overlay (inicio / resultado) ---------------- */
 .screen.screen{ /* start & result share this */ }
 #screen-start, #screen-result{
