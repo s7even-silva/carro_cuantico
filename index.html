@@ -9,6 +9,18 @@
 <body>
 <div id="app">
 
+  <!-- Aviso si el backend de Qiskit no responde (p.ej. corriste
+       "python -m http.server" en vez de "python server.py"). Se llena
+       y se muestra desde game.js -> checkBackendHealth(). -->
+  <div id="server-warning" class="server-warning hidden" role="alert">
+    <strong>⚠ Servidor incorrecto.</strong>
+    Esta página no tiene el backend de Qiskit conectado (probablemente corriste
+    <code>python -m http.server</code> en vez de <code>python server.py</code>).
+    La medición final <u>no va a funcionar</u> así. Cerrá esta pestaña, corré
+    <code>python server.py</code> en la carpeta del proyecto y abrí
+    <code id="server-warning-url">http://localhost:8731</code>.
+  </div>
+
   <!-- ============ PANTALLA DE INICIO ============ -->
   <section id="screen-start" class="screen">
     <div class="start-card">
