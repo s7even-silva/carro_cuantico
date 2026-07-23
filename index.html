@@ -32,17 +32,17 @@
           </div>
         </div>
         <div class="howto-row">
-          <img src="assets/img/wheel_neutro.png" alt="Volante" />
+          <img src="assets/img/lever_oraculo_off.png" alt="Freno de mano" />
           <div>
-            <h3>2. El volante gira libre</h3>
-            <p>Sin condiciones ni combos: mantén presionado ◀ o ▶ para deslizarte entre carriles y esquivar lo que venga.</p>
+            <h3>2. El freno habilita el volante</h3>
+            <p>El volante <b>solo gira con el freno activo</b> — sin freno, tocar ◀ o ▶ no hace nada. Es un drift real: primero frenás, después girás. Y puede que el freno se suelte solo por chance — hay que estar atento y volver a activarlo.</p>
           </div>
         </div>
         <div class="howto-row">
-          <img src="assets/img/lever_oraculo_off.png" alt="Freno de mano" />
+          <img src="assets/img/wheel_neutro.png" alt="Volante" />
           <div>
-            <h3>3. El freno</h3>
-            <p>Actívalo para avanzar más lento por la pista — más tiempo para reaccionar, pero gastas tu reloj más rápido.</p>
+            <h3>3. Esquiva con el freno puesto</h3>
+            <p>Con el freno activo, mantén presionado ◀ o ▶ para deslizarte entre carriles. Frenar también te hace avanzar más lento por la pista — más tiempo para reaccionar, pero gastas tu reloj más rápido.</p>
           </div>
         </div>
         <div class="howto-row combo-row">
@@ -50,8 +50,9 @@
           <div>
             <h3>4. Cada choque cuenta</h3>
             <p>Chocar un obstáculo le resta una iteración real al circuito que corre Qiskit al medir — nunca vas a ver un número
-            que te diga si vas bien, pero esquivar limpio importa de verdad. La <b>brújula externa</b> (arriba de la pista) solo se
-            va iluminando a medida que se acerca el resultado final.</p>
+            que te diga si vas bien, pero esquivar limpio importa de verdad. El gráfico junto al HUD (<b>naranja</b> = oráculo,
+            <b>verde</b> = difusor) muestra cuántas iteraciones arman esa red de obstáculos. La <b>brújula externa</b> (arriba de
+            la pista) solo se va iluminando a medida que se acerca el resultado final.</p>
           </div>
         </div>
       </div>
@@ -77,6 +78,10 @@
         <span class="hud-label">Motor</span>
         <span class="hud-value" id="hud-engine">apagado</span>
       </div>
+      <div class="hud-block hud-circuit-block">
+        <span class="hud-label">Circuito (R olas)</span>
+        <canvas id="circuit-canvas" class="circuit-canvas" title="Naranja = oráculo, verde = difusor, una vez por iteración real"></canvas>
+      </div>
       <div class="hud-block hud-timer-block">
         <span class="hud-label">Tiempo</span>
         <div class="hud-timer-track"><div id="hud-timer-fill" class="hud-timer-fill"></div></div>
@@ -97,7 +102,8 @@
         <img id="img-hadamard" src="assets/img/btn_hadamard_off.png" alt="" />
         <span class="ctrl-caption">hadamard</span>
       </button>
-      <button id="btn-handbrake" class="ctrl ctrl-lever" aria-label="Freno: avanza más lento">
+      <button id="btn-handbrake" class="ctrl ctrl-lever" aria-label="Freno: habilita el volante y avanza más lento">
+
         <img id="img-lever" src="assets/img/lever_oraculo_off.png" alt="" />
         <span class="ctrl-caption">freno</span>
       </button>

@@ -7,12 +7,17 @@
    el circuito (R, fórmula Boyer-Brassard-Høyer-Tapp -- la misma que usa
    backend/grover_qiskit.py), evocando el ritmo de bloques repetidos
    (oráculo + difusor, barrera, oráculo + difusor...) del diagrama real
-   del circuito. El volante gira LIBRE en todo momento -- no hay combo
-   que armar. El juego nunca dice si vas por el carril correcto: solo
-   ves los obstáculos y decides. Cada choque resta una iteración
-   "efectiva" del circuito que de verdad se corre en Qiskit al llegar a
-   la meta o agotarse el tiempo -- esquivar bien importa, pero nunca se
-   muestra un número que delate el carril correcto mientras se juega.
+   del circuito -- un gráfico chico junto al HUD (renderCircuitDiagram)
+   muestra ese mismo patrón: un carril por qubit + ancilla, y un bloque
+   naranja/verde (oráculo/difusor) por cada iteración real. El volante
+   solo gira mientras el freno está activo (es un drift real: primero
+   frenás, después girás) y el freno puede soltarse solo por chance,
+   obligando a reactivarlo. El juego nunca dice si vas por el carril
+   correcto: solo ves los obstáculos y decides. Cada choque resta una
+   iteración "efectiva" del circuito que de verdad se corre en Qiskit al
+   llegar a la meta o agotarse el tiempo -- esquivar bien importa, pero
+   nunca se muestra un número que delate el carril correcto mientras se
+   juega.
    =====================================================================
    SPRITE DEL VEHÍCULO
    --------------------
@@ -31,6 +36,7 @@ const CONFIG = {
   steerRepeatMs: 130,             // repetición al mantener presionado el volante
   brakeFactor: 0.42,              // qué tanto frena el avance por la pista al frenar
   gapFraction: 0.28,              // fracción de carriles libres en cada ola (mínimo 2)
+  brakeDropChancePerSec: 0.16,    // probabilidad por segundo de que el freno se suelte solo
 };
 
 // ---------------------------------------------------------------------
@@ -126,7 +132,7 @@ function cacheEls() {
     "hud-timer-fill", "hud-timer-label",
     "toast",
     "result-eyebrow", "result-title", "result-text",
-    "track-canvas", "compass-canvas",
+    "track-canvas", "compass-canvas", "circuit-canvas",
   ].forEach((id) => (els[id] = document.getElementById(id)));
 }
 
@@ -140,6 +146,7 @@ function showScreenEl(id) {
   if (id === "game-root") {
     resizeTrackCanvas();
     resizeCompassCanvas();
+    resizeCircuitCanvas();
   }
 }
 
@@ -258,10 +265,10 @@ function hadamardInit() {
   toast("Motor encendido — esquiva los obstáculos hasta la meta.", "good");
 }
 
-// Volante libre: cada toque (o cada tick mientras se mantiene) desliza
-// un carril, sin ninguna condición previa.
+// El volante solo responde con el freno activo -- es un drift real:
+// primero frenás, después girás. Sin freno, tocar el volante no hace nada.
 function attemptSteer(dir) {
-  if (!state.engineOn || state.measuring) return;
+  if (!state.engineOn || state.measuring || !state.braking) return;
   const next = Math.max(0, Math.min(state.N - 1, state.laneTarget + dir));
   if (next !== state.laneTarget) spawnDust(dir);
   state.laneTarget = next;
@@ -647,6 +654,50 @@ function renderCompass(ctx, w, h) {
   ctx.fillText("brújula externa", left, 14);
 }
 
+// Gráfico chico del circuito: un carril por qubit de datos + la ancilla,
+// con un bloque naranja (oráculo) y uno verde (difusor) por cada
+// iteración real -- el mismo patrón que genera la red de obstáculos.
+function renderCircuitDiagram(ctx, w, h) {
+  ctx.clearRect(0, 0, w, h);
+  const wires = state.n + 1;
+  const padY = 6;
+  const wireGap = wires > 1 ? (h - padY * 2) / (wires - 1) : 0;
+  const padX = 5;
+
+  ctx.strokeStyle = "rgba(255,255,255,.3)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < wires; i++) {
+    const y = padY + i * wireGap;
+    ctx.beginPath();
+    ctx.moveTo(padX, y);
+    ctx.lineTo(w - padX, y);
+    ctx.stroke();
+  }
+
+  let x = padX + 8;
+  ctx.fillStyle = "rgba(73,211,255,.9)";
+  for (let i = 0; i < wires; i++) {
+    const y = padY + i * wireGap;
+    roundRectPath(ctx, x - 3, y - 3, 6, 6, 1.5);
+    ctx.fill();
+  }
+  x += 12;
+
+  const R = Math.max(1, state.optimalIter);
+  const avail = Math.max(4, w - padX - 4 - x);
+  const blockW = Math.max(4, avail / (R * 2.4));
+  const blockH = h - padY * 2 + 6;
+
+  for (let r = 0; r < R; r++) {
+    ctx.fillStyle = "rgba(255,138,90,.55)";
+    ctx.fillRect(x, padY - 3, blockW, blockH);
+    x += blockW * 1.15;
+    ctx.fillStyle = "rgba(52,224,122,.5)";
+    ctx.fillRect(x, padY - 3, blockW, blockH);
+    x += blockW * 1.25;
+  }
+}
+
 // ---------------------------------------------------------------------
 // CANVAS SETUP + LOOP
 // ---------------------------------------------------------------------
@@ -668,7 +719,7 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-let trackCtx, compassCtx, resizeTrackCanvas, resizeCompassCanvas;
+let trackCtx, compassCtx, circuitCtx, resizeTrackCanvas, resizeCompassCanvas, resizeCircuitCanvas;
 
 function loop(ts) {
   const dt = Math.min(0.05, (ts - lastTs) / 1000);
@@ -681,6 +732,11 @@ function loop(ts) {
       state.lanePos = lerp(state.lanePos, state.laneTarget, rate);
 
       if (state.engineOn && !state.measuring) {
+        if (state.braking && Math.random() < CONFIG.brakeDropChancePerSec * dt) {
+          state.braking = false;
+          updateControlVisuals();
+          toast("¡El freno se soltó! Actívalo de nuevo para girar.", "warn");
+        }
         const brakeMul = state.braking ? CONFIG.brakeFactor : 1;
         state.trackProgress = Math.min(1, state.trackProgress + (dt / state.courseDurationSec) * brakeMul);
         checkCollisions();
@@ -703,6 +759,7 @@ function loop(ts) {
       // setTimeout), así que el compás siempre tiene tamaño válido aquí.
       if (state.screen === "game-root") {
         renderCompass(compassCtx, els["compass-canvas"].clientWidth, els["compass-canvas"].clientHeight);
+        renderCircuitDiagram(circuitCtx, els["circuit-canvas"].clientWidth, els["circuit-canvas"].clientHeight);
       }
     }
   } catch (err) {
@@ -770,6 +827,7 @@ document.addEventListener("DOMContentLoaded", () => {
   cacheEls();
   ({ ctx: trackCtx, resize: resizeTrackCanvas } = setupCanvas(els["track-canvas"]));
   ({ ctx: compassCtx, resize: resizeCompassCanvas } = setupCanvas(els["compass-canvas"]));
+  ({ ctx: circuitCtx, resize: resizeCircuitCanvas } = setupCanvas(els["circuit-canvas"]));
   wire();
   resetRound(CONFIG.levels[state.levelIndex]);
   showScreenEl("screen-start");

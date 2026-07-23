@@ -81,8 +81,11 @@ Secciones en orden dentro del archivo:
    `updateTimerHud`, `updateControlVisuals`) — helpers de UI, todos los
    elementos cacheados en el objeto `els`.
 3. **Flujo de ronda/nivel** (`resetRound`, `hadamardInit`, `attemptSteer`,
-   `checkCollisions`, `finishRound`) — `attemptSteer` mueve el carril
-   objetivo sin ninguna condición (el volante es libre). `checkCollisions`
+   `checkCollisions`, `finishRound`) — `attemptSteer` solo mueve el carril
+   objetivo si `state.braking` es `true` (drift real: primero se frena,
+   después se gira; sin freno, tocar el volante no hace nada). El freno
+   también puede soltarse solo (`CONFIG.brakeDropChancePerSec`, chequeado
+   en `loop()`), obligando a reactivarlo. `checkCollisions`
    corre cada frame: cuando el auto cruza la fracción de pista de una ola
    no visitada, revisa si el carril actual está bloqueado — si es así,
    resta 1 a `state.effectiveIter` (piso en 0) y dispara partículas de
@@ -99,7 +102,10 @@ Secciones en orden dentro del archivo:
    `null`), franja de la brújula externa (`renderCompass`, canvas
    separado arriba de la pista) — es solo un brillo ambiental atado a
    `trackProgress`/tiempo restante, nunca apunta a un carril ni muestra
-   un porcentaje.
+   un porcentaje. `renderCircuitDiagram` (canvas chico en el HUD) dibuja
+   el mismo patrón que usa `generateObstacles`: un carril por qubit +
+   ancilla y un bloque naranja/verde (oráculo/difusor) por cada iteración
+   real (R) — es puramente ilustrativo, no interactivo.
 5. **Bucle de animación y listeners de eventos** al final del archivo. El
    `loop()` está envuelto en try/catch — un error de un solo frame no debe
    detener el `requestAnimationFrame` para siempre. El volante usa
@@ -120,8 +126,9 @@ backend).
   Mantén ese idioma al editar o añadir contenido.
 - El freno de mano es un *toggle* (click), no algo que se sostiene — es
   una limitación intencional para jugar con mouse (un solo cursor no
-  puede sostener dos controles a la vez). Actualmente hace de freno real
-  (frena `trackProgress`), no está ligado al oráculo/combo.
+  puede sostener dos controles a la vez). Hace de freno real (frena
+  `trackProgress`) Y habilita el volante al mismo tiempo — `attemptSteer`
+  no hace nada si `state.braking` es `false`.
 - **Nunca revelar correctness durante la partida**: nada de toasts,
   texto ni HUD que indique "vas bien"/"certeza X%"/"alineado" mientras
   se juega — fue un pedido explícito del usuario. El único momento en que
