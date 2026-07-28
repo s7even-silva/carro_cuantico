@@ -1,80 +1,75 @@
 # Carro cuántico
 
-**Circuito Cuántico — Nivel 1: Grover / Modo Drift**
+**Fotón Cuántico — Hadamard, NOT y Z**
 
-Un minijuego web que enseña el algoritmo de búsqueda de Grover usando la
-analogía de un auto que esquiva obstáculos entre carriles. El frontend
-(HTML, CSS, JS puro) corre en el navegador, pero **la medición final la
-decide un circuito real de Grover corriendo en Qiskit** — no un número
-inventado en JavaScript.
+Un minijuego web pensado para secundaria: el auto **es un fotón** que puede
+viajar por dos caminos (camino 0 / camino 1), y los controles son
+compuertas cuánticas reales — nada de algoritmos escondidos. Todo corre en
+el navegador, sin servidor: para este juego basta con un único qubit, así
+que la evolución del fotón es una matriz real 2×2 que se simula exacta en
+JavaScript (sin necesidad de números complejos ni de un backend en Qiskit).
 
 ## La idea
 
-Tu auto cuántico arranca entre `N` carriles (`N = 2ⁿ`). Uno lleva a la
-meta, no sabes cuál, y el juego **nunca te lo dice**: solo ves una red de
-obstáculos por delante (una ola por cada iteración real que necesita el
-algoritmo de Grover para ese circuito) y decidís por tu cuenta cómo
-esquivarla, contra un límite de tiempo que arranca al encender el motor.
+Cada nivel habilita una compuerta más:
 
-- **Hadamard** (botón) — enciende el motor, arranca el reloj y revela la
-  pista de obstáculos.
-- **Freno de mano** — clic para activarlo: frena el avance por la pista
-  (más tiempo para reaccionar) y habilita el volante al mismo tiempo. Se
-  puede soltar solo con el tiempo, obligando a reactivarlo.
-- **Volante** — solo gira mientras el freno está activo (es un drift
-  real: primero frenás, después girás). Mantenlo presionado para
-  deslizarte varios carriles seguidos.
-- **Cada choque cuenta** — chocar un obstáculo resta una iteración real
-  al circuito que corre Qiskit al medir. No hay ningún número en pantalla
-  que te diga si vas por el carril correcto; la **brújula externa**
-  (franja arriba de la pista) solo se ilumina más a medida que se acerca
-  el resultado final (meta o fin del tiempo), nunca indica una dirección.
-  Cruza la meta (o esperá a que se acabe el tiempo) para medir de verdad.
+1. **Nivel 1 — NOT (X):** el espejo cuántico. Invierte el camino del fotón,
+   siempre, sin azar. Un número impar de X te deja del otro lado; un
+   número par te deja igual.
+2. **Nivel 2 — Hadamard (H):** reparte al fotón mitad y mitad entre los dos
+   caminos (dos autos fantasma en pantalla). Al medir, la naturaleza tira
+   una moneda cuántica real — no hay forma de forzar el resultado con esta
+   única compuerta.
+3. **Nivel 3 — fase (Z):** Z no mueve al fotón ni cambia sus
+   probabilidades — solo invierte su fase (el anillo del fantasma cambia
+   de celeste a magenta). Sola no hace nada visible, pero intercalada
+   entre dos Hadamard (`H · Z · H = X`) recupera el control total: eso es
+   interferencia cuántica.
+4. **Nivel 4 — pista libre:** las tres compuertas juntas, con un obstáculo
+   a mitad de pista. Cruzarlo en superposición es seguro (todavía no está
+   decidido en qué camino estás); cruzarlo ya colapsado en el camino
+   bloqueado es choque.
+
+El HUD siempre muestra el estado real del fotón (`P(0)`, `P(1)` y el signo
+de cada amplitud), para que se pueda seguir el efecto de cada compuerta
+compuerta por compuerta.
 
 ## Cómo ejecutar el juego
 
-Ya no alcanza con abrir `index.html` directo: la medición final depende
-de un backend en Python con Qiskit. Hay que instalar las dependencias una
-vez y levantar el servidor incluido (sirve el juego y la API en el mismo
-puerto):
+No hace falta nada especial — es HTML/CSS/JS puro:
 
 ```bash
-pip install qiskit qiskit-aer
-python server.py            # sirve en http://localhost:8731 por defecto
-# (opcional) python server.py 9000   -> para elegir otro puerto
+# cualquier servidor estático sirve, por ejemplo:
+python -m http.server 8000
 ```
 
-Luego abre `http://localhost:8731` (o el puerto que elegiste) en el
-navegador.
+o directamente abrir `index.html` en el navegador.
 
 ## Estructura del proyecto
 
 ```
-index.html              Marcado de las tres pantallas: inicio, juego y resultado
-style.css                Estilos y animaciones
-game.js                   Lógica del cliente: obstáculos, carriles, brújula, temporizador
-server.py                 Servidor único: sirve el juego y la API /api/measure
-backend/grover_qiskit.py  El circuito real de Grover (Qiskit + AerSimulator)
-assets/img/                Sprites de los controles (Hadamard, freno, volante)
+index.html   Marcado de las tres pantallas: inicio, juego y resultado
+style.css     Estilos y animaciones
+game.js        Lógica del cliente: estado del fotón, niveles, pista, HUD
+assets/img/     Sprite del auto/fotón y botón de Hadamard
 ```
 
 ## Controles
 
 | Control | Acción |
 |---|---|
-| **Hadamard** | Enciende el motor, arranca el reloj y revela la pista de obstáculos |
-| **Freno de mano** | Clic para activar/desactivar el freno (avanza más lento y habilita el volante) |
-| **Volante (◀ ▶)** | Solo gira con el freno activo — mantenlo presionado para varios carriles |
-| **META** | Cruza la meta ahora y mide el resultado (si no, se mide solo al agotarse el tiempo) |
-| **↺ reiniciar** | Reinicia la ronda actual |
+| **X (NOT)** | Invierte el camino del fotón |
+| **H (Hadamard)** | Pone al fotón en superposición de los dos caminos |
+| **Z (fase)** | Invierte la fase — invisible sola, importa combinada con H |
+| **MEDIR** | Colapsa el fotón ahora (si no, se mide solo al llegar a la meta) |
+| **↺ reiniciar** | Reinicia el nivel actual con una meta nueva |
 
-## El backend de Qiskit
+## El modelo cuántico
 
-`backend/grover_qiskit.py` sigue la teoría al pie de la letra: `n` qubits
-de datos + 1 ancilla, ancilla en `|->` (X + H), superposición `H^n`,
-`R` iteraciones de oráculo (phase kickback vía `mcx`) + difusor
-(`2|s><s| - I`), y medición. `server.py` expone eso como
-`POST /api/measure`, que recibe `{n, target, iterations}` (R menos los
-choques que tuviste en la pista) y devuelve el histograma real de
-`AerSimulator` junto con una medición muestreada de ese histograma. Puedes
-probar el circuito solo, sin el juego, con `python backend/grover_qiskit.py`.
+Como el juego solo usa X, H y Z (las tres son matrices reales), el estado
+del fotón se representa como dos amplitudes reales `(a0, a1)` con
+`a0² + a1² = 1` — sin necesidad de números complejos. Medir consiste en
+tirar una moneda pesada por esas probabilidades (`Math.random() < a1²`) y
+colapsar el estado al resultado. Es la misma física que describiría un
+circuito de Qiskit de un qubit con esas mismas compuertas, solo que no
+hace falta un simulador externo para calcularla.

@@ -3,74 +3,57 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Circuito Cuántico — Nivel 1: Grover / Modo Drift</title>
+<title>Fotón Cuántico — Hadamard, NOT y Z</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <div id="app">
 
-  <!-- Aviso si el backend de Qiskit no responde (p.ej. corriste
-       "python -m http.server" en vez de "python server.py"). Se llena
-       y se muestra desde game.js -> checkBackendHealth(). -->
-  <div id="server-warning" class="server-warning hidden" role="alert">
-    <strong>⚠ Servidor incorrecto.</strong>
-    Esta página no tiene el backend de Qiskit conectado (probablemente corriste
-    <code>python -m http.server</code> en vez de <code>python server.py</code>).
-    La medición final <u>no va a funcionar</u> así. Cerrá esta pestaña, corré
-    <code>python server.py</code> en la carpeta del proyecto y abrí
-    <code id="server-warning-url">http://localhost:8731</code>.
-  </div>
-
   <!-- ============ PANTALLA DE INICIO ============ -->
   <section id="screen-start" class="screen">
     <div class="start-card">
-      <p class="eyebrow">Circuito Cuántico · Nivel 1</p>
-      <h1>Modo Drift</h1>
+      <p class="eyebrow">Circuito Cuántico · Fotón</p>
+      <h1>Fotón Cuántico</h1>
       <p class="lede">
-        Tu auto cuántico arranca entre N carriles, y por delante hay una red
-        de obstáculos con la misma cantidad de olas que iteraciones reales
-        tiene el algoritmo de Grover para ese circuito. Hay un único carril
-        de victoria, y la brújula de arriba lo va iluminando de a poco —
-        esquiva los obstáculos, mantén un ojo en la brújula, y llega a la
-        meta antes de que se acabe el tiempo.
+        Tu auto <b>es un fotón</b> que puede viajar por dos caminos: izquierda
+        (camino 0) o derecha (camino 1). No hay algoritmos raros ni cálculos
+        escondidos — cada botón es una compuerta cuántica real, y lo que ves
+        en la pista es exactamente lo que le pasa al fotón al aplicarla.
       </p>
 
       <div class="howto">
         <div class="howto-row">
-          <img src="assets/img/btn_hadamard_off.png" alt="Botón Hadamard" />
+          <div class="gate-icon gate-icon-x">X</div>
           <div>
-            <h3>1. Enciende el motor</h3>
-            <p>Pulsa <b>HADAMARD</b> para arrancar. Empieza el reloj y aparece la pista de obstáculos.</p>
+            <h3>NOT (X) — el espejo</h3>
+            <p>Invierte el camino del fotón: si iba por la izquierda, pasa a la derecha, y viceversa. Sin sorpresas, siempre igual.</p>
           </div>
         </div>
         <div class="howto-row">
-          <img src="assets/img/lever_oraculo_off.png" alt="Freno de mano" />
+          <div class="gate-icon gate-icon-h">H</div>
           <div>
-            <h3>2. El freno habilita el volante</h3>
-            <p>El volante <b>solo gira con el freno activo</b> — sin freno, tocar ◀ o ▶ no hace nada. Es un drift real: primero frenás, después girás. Y puede que el freno se suelte solo por chance — hay que estar atento y volver a activarlo.</p>
+            <h3>Hadamard (H) — la superposición</h3>
+            <p>Reparte al fotón entre los dos caminos a la vez, mitad y mitad. Vas a ver dos autos fantasma. Recién al <b>medir</b>, la naturaleza tira una moneda cuántica real y el fotón aparece en uno solo.</p>
           </div>
         </div>
         <div class="howto-row">
-          <img src="assets/img/wheel_neutro.png" alt="Volante" />
+          <div class="gate-icon gate-icon-z">Z</div>
           <div>
-            <h3>3. Esquiva con el freno puesto</h3>
-            <p>Con el freno activo, mantén presionado ◀ o ▶ para deslizarte entre carriles. Frenar también te hace avanzar más lento por la pista — más tiempo para reaccionar, pero gastas tu reloj más rápido.</p>
+            <h3>Fase (Z) — la compuerta invisible</h3>
+            <p>No mueve al fotón ni cambia sus probabilidades — solo le da vuelta la fase (vas a ver el anillo del fantasma cambiar de color). Sola no hace nada visible, pero combinada con Hadamard puede cambiar todo el resultado.</p>
           </div>
         </div>
         <div class="howto-row combo-row">
-          <div class="combo-icons"><span>🚧</span></div>
+          <div class="gate-icon gate-icon-combo">⇄</div>
           <div>
-            <h3>4. Cada choque cuenta</h3>
-            <p>Chocar un obstáculo le resta una iteración real al circuito que corre Qiskit al medir, así que esquivar limpio
-            importa de verdad. El gráfico junto al HUD (<b>naranja</b> = oráculo, <b>verde</b> = difusor) muestra cuántas
-            iteraciones arman esa red de obstáculos. La <b>brújula externa</b> (arriba de la pista) marca el único carril de
-            victoria y se va iluminando a medida que se acerca el resultado final — pero hay que estar mirándola, no solo la pista.</p>
+            <h3>4 niveles, uno por concepto</h3>
+            <p>Nivel 1 solo tiene NOT. Nivel 2 solo tiene Hadamard (ahí vas a sentir el azar cuántico real). Nivel 3 suma la fase Z para volver a tener control total. Nivel 4 es pista libre con las tres compuertas y un obstáculo.</p>
           </div>
         </div>
       </div>
 
       <button id="btn-play" class="btn-primary">Arrancar</button>
-      <p class="fineprint">Controles a los costados. Auto en vista 3D, pista en 2D. La medición final la corre un circuito real de Qiskit.</p>
+      <p class="fineprint">Todo corre en el navegador — sin servidor. La medición es una simulación real de un fotón de un qubit.</p>
     </div>
   </section>
 
@@ -78,23 +61,19 @@
   <section id="game-root" class="screen hidden">
 
     <header class="hud">
-      <div class="hud-block">
-        <span class="hud-label">Carriles (N)</span>
-        <span class="hud-value" id="hud-n">4</span>
+      <div class="hud-block hud-level-block">
+        <span class="hud-label" id="hud-level-label">Nivel 1</span>
+        <span class="hud-value" id="hud-level-title">—</span>
       </div>
       <div class="hud-block">
-        <span class="hud-label">Choques</span>
-        <span class="hud-value"><span id="hud-iter">0</span> <span class="hud-dim">/ R≈<span id="hud-opt">1</span></span></span>
+        <span class="hud-label">Meta</span>
+        <span class="hud-value" id="hud-goal">—</span>
       </div>
-      <div class="hud-block">
-        <span class="hud-label">Motor</span>
-        <span class="hud-value" id="hud-engine">apagado</span>
+      <div class="hud-block hud-state-block">
+        <span class="hud-label">Estado del fotón</span>
+        <span class="hud-value hud-state" id="hud-state">P(0)=100% · P(1)=0%</span>
       </div>
-      <div class="hud-block hud-circuit-block">
-        <span class="hud-label">Circuito (R olas)</span>
-        <canvas id="circuit-canvas" class="circuit-canvas" title="Naranja = oráculo, verde = difusor, una vez por iteración real"></canvas>
-      </div>
-      <div class="hud-block hud-timer-block">
+      <div class="hud-block hud-timer-block hidden" id="hud-timer-block">
         <span class="hud-label">Tiempo</span>
         <div class="hud-timer-track"><div id="hud-timer-fill" class="hud-timer-fill"></div></div>
         <span class="hud-value hud-timer-label" id="hud-timer-label">--</span>
@@ -103,34 +82,27 @@
     </header>
 
     <div class="stage">
-      <canvas id="compass-canvas" class="compass-strip"></canvas>
       <canvas id="track-canvas"></canvas>
       <div id="toast" class="toast"></div>
     </div>
 
-    <!-- Dock izquierdo: motor + freno -->
-    <div class="dock dock-left">
-      <button id="btn-hadamard" class="ctrl ctrl-hadamard" aria-label="Hadamard: encender motor">
-        <img id="img-hadamard" src="assets/img/btn_hadamard_off.png" alt="" />
+    <!-- Dock inferior: compuertas + medir -->
+    <div class="dock dock-bottom">
+      <button id="btn-gate-x" class="ctrl ctrl-gate ctrl-gate-x" aria-label="Compuerta NOT (X)">
+        <span class="gate-icon gate-icon-x">X</span>
+        <span class="ctrl-caption">not</span>
+      </button>
+      <button id="btn-gate-h" class="ctrl ctrl-gate ctrl-gate-h" aria-label="Compuerta Hadamard (H)">
+        <span class="gate-icon gate-icon-h">H</span>
         <span class="ctrl-caption">hadamard</span>
       </button>
-      <button id="btn-handbrake" class="ctrl ctrl-lever" aria-label="Freno: habilita el volante y avanza más lento">
-
-        <img id="img-lever" src="assets/img/lever_oraculo_off.png" alt="" />
-        <span class="ctrl-caption">freno</span>
+      <button id="btn-gate-z" class="ctrl ctrl-gate ctrl-gate-z" aria-label="Compuerta de fase (Z)">
+        <span class="gate-icon gate-icon-z">Z</span>
+        <span class="ctrl-caption">fase</span>
       </button>
-    </div>
-
-    <!-- Dock derecho: volante + acelerar -->
-    <div class="dock dock-right">
-      <div class="wheel-wrap">
-        <img id="img-wheel" src="assets/img/wheel_neutro.png" alt="Volante" />
-        <button id="btn-steer-left" class="steer steer-left" aria-label="Girar izquierda">◀</button>
-        <button id="btn-steer-right" class="steer steer-right" aria-label="Girar derecha">▶</button>
-      </div>
-      <button id="btn-accel" class="ctrl ctrl-accel" aria-label="Cruzar la meta ahora / medir">
-        <span class="accel-label">META</span>
-        <span class="accel-sub">medir ya</span>
+      <button id="btn-measure" class="ctrl ctrl-accel" aria-label="Medir el fotón ahora">
+        <span class="accel-label">MEDIR</span>
+        <span class="accel-sub">colapsar ya</span>
       </button>
     </div>
   </section>
@@ -142,7 +114,7 @@
       <h1 id="result-title">—</h1>
       <p class="lede" id="result-text">—</p>
       <div class="result-actions">
-        <button id="btn-retry" class="btn-ghost">Reintentar (misma N)</button>
+        <button id="btn-retry" class="btn-ghost">Reintentar (mismo nivel)</button>
         <button id="btn-next" class="btn-primary">Siguiente →</button>
       </div>
     </div>

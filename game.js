@@ -1,120 +1,91 @@
 "use strict";
 /* =====================================================================
-   Circuito Cuántico — Nivel 1: Grover / Modo Drift
-   =====================================================================
-   Pista de carriles (N = 2^n) con una red de obstáculos que se genera
-   con el mismo número de "olas" que iteraciones reales de Grover tiene
-   el circuito (R, fórmula Boyer-Brassard-Høyer-Tapp -- la misma que usa
-   backend/grover_qiskit.py), evocando el ritmo de bloques repetidos
-   (oráculo + difusor, barrera, oráculo + difusor...) del diagrama real
-   del circuito -- un gráfico chico junto al HUD (renderCircuitDiagram)
-   muestra ese mismo patrón: un carril por qubit + ancilla, y un bloque
-   naranja/verde (oráculo/difusor) por cada iteración real. El volante
-   solo gira mientras el freno está activo (es un drift real: primero
-   frenás, después girás) y el freno puede soltarse solo por chance,
-   obligando a reactivarlo. La brújula externa marca el único carril de
-   victoria (state.target) y se va iluminando a medida que se acerca el
-   resultado final -- pero hay que estar mirando la brújula, no solo la
-   pista, para aprovecharlo a tiempo. Cada choque resta una iteración
-   "efectiva" del circuito que de verdad se corre en Qiskit al llegar a
-   la meta o agotarse el tiempo -- esquivar bien sigue importando de
-   verdad, sea cual sea el carril al que llegues.
-   =====================================================================
-   SPRITE DEL VEHÍCULO
-   --------------------
-   CONFIG.carSpriteSrc apunta a assets/img/car_sprite.png (vista top-down,
-   sin fondo). Se dibuja siempre "de frente" sin rotar. Si se pone en
-   null, se usa un auto de relleno dibujado a mano (drawCarPlaceholder).
+   Fotón Cuántico — el auto ES un fotón/qubit. Solo 2 caminos (camino 0 /
+   camino 1), y los controles son compuertas cuánticas reales: NOT (X),
+   Hadamard (H) y fase (Z). Como el juego solo usa esas tres compuertas,
+   el estado del fotón se queda siempre en amplitudes REALES (a0, a1 con
+   a0²+a1²=1, sin números complejos) -- las tres matrices son reales, así
+   que esto no es una simplificación con trucos: es exactamente la misma
+   física, solo que no hace falta i para describirla. Medir es tirar una
+   moneda cuántica real con Math.random() pesada por esas probabilidades.
+
+   4 niveles, cada uno habilita una compuerta más:
+     1) solo X       -> flip determinista, sin azar.
+     2) solo H        -> superposición + medición real (azar de verdad).
+     3) H + Z          -> la fase no mueve nada sola, pero H·Z·H = X: se
+                          puede recuperar el control total combinando.
+     4) H + X + Z + un obstáculo -> cruzar en superposición esquiva el
+                          obstáculo (no está "decidido" en qué camino
+                          está hasta medir); cruzar ya colapsado en el
+                          camino bloqueado es choque.
    =====================================================================*/
 
 const CONFIG = {
-  levels: [2, 3, 4],             // n = qubits por nivel -> N = 2^n carriles
-  laneLerpRate: 9,                // qué tan rápido desliza el auto entre carriles
-  secondsPerIteration: 3.0,       // presupuesto de tiempo por ola de obstáculos
-  extraBufferIterations: 2,       // margen extra de tiempo sobre el óptimo
-  revealMs: 800,                  // pausa visual tras medir antes de mostrar resultado
+  levels: [
+    { id: "not", hudLabel: "Nivel 1", title: "Espejo cuántico (NOT)", gates: ["X"], driveSeconds: 5, hasObstacle: false, hasTimer: false },
+    { id: "hadamard", hudLabel: "Nivel 2", title: "Superposición (Hadamard)", gates: ["H"], driveSeconds: 5, hasObstacle: false, hasTimer: false },
+    { id: "interference", hudLabel: "Nivel 3", title: "La compuerta invisible (fase Z)", gates: ["H", "Z"], driveSeconds: 6, hasObstacle: false, hasTimer: false },
+    { id: "free", hudLabel: "Nivel 4", title: "Pista libre", gates: ["H", "X", "Z"], driveSeconds: 9, hasObstacle: true, hasTimer: true },
+  ],
+  revealMs: 800,
+  crashFlashMs: 350,
   carSpriteSrc: "assets/img/car_sprite.png",
-  steerRepeatMs: 130,             // repetición al mantener presionado el volante
-  brakeFactor: 0.42,              // qué tanto frena el avance por la pista al frenar
-  gapFraction: 0.28,              // fracción de carriles libres en cada ola (mínimo 2)
-  brakeDropChancePerSec: 0.16,    // probabilidad por segundo de que el freno se suelte solo
 };
 
 // ---------------------------------------------------------------------
 // ESTADO
 // ---------------------------------------------------------------------
 const state = {
-  screen: "start",     // start | game-root | result
+  screen: "start",
   levelIndex: 0,
-  n: 2,
-  N: 4,
-  target: 0,            // secreto: nunca se muestra hasta el resultado final
-  engineOn: false,
+  q: { a0: 1, a1: 0 },     // amplitudes reales del fotón: a0²+a1²=1
+  goalLane: 0,
 
-  optimalIter: 1,       // R real (Boyer-Brassard-Høyer-Tapp)
-  collisions: 0,
-  effectiveIter: 1,      // R menos los choques -- lo que de verdad se le manda a Qiskit
+  driving: false,
+  driveDurationSec: 1,
+  trackProgress: 0,        // 0..1 a lo largo de la pista
+  autoFinishArmed: false,
 
-  braking: false,        // freno de mano reusado como freno real (frena el avance)
-
-  lanePos: 1.5,           // posición continua del auto (para animar el deslizamiento)
-  laneTarget: 1,
-
-  obstacles: [],          // olas generadas por generateObstacles()
-
-  timeLimitMs: 0,
-  roundDeadline: 0,
-  courseDurationSec: 1,
-  trackProgress: 0,       // 0..1, avanza según courseDurationSec (lo frena el freno)
+  obstacleLane: 0,
+  obstacleFrac: 0.55,
+  obstaclePassed: false,
 
   measuring: false,
-  autoFinishArmed: false,
-  crashFlashUntil: 0,
-
-  measuredIndex: null,
+  crashed: false,
+  measuredLane: null,
+  lastProbs: null,
   lastWin: null,
+
+  gateLog: [],
+  crashFlashUntil: 0,
 };
 
 const particles = [];
+let lastCarPos = { x: 0, y: 0 };
 let lastTs = performance.now();
 
 // ---------------------------------------------------------------------
-// GROVER: solo lo que hace falta para el HUD y para generar la pista.
-// La medición real SIEMPRE la corre Qiskit en el backend.
+// COMPUERTAS: matrices reales 2x2 aplicadas directo sobre (a0, a1).
 // ---------------------------------------------------------------------
-function bbhtOptimalIterations(n) {
-  const N = 2 ** n;
-  const theta = Math.asin(1 / Math.sqrt(N));
-  const R = Math.round(Math.PI / 4 / theta - 0.5);
-  return Math.max(1, R);
+function clean(v) {
+  return Math.abs(v) < 1e-9 ? 0 : v;
 }
-
-// Genera la red de obstáculos: una ola por cada iteración real de Grover
-// (R), separadas a lo largo de la pista como los bloques repetidos del
-// diagrama del circuito. Cada ola bloquea todos los carriles salvo un
-// hueco (gap) que serpentea de una ola a la siguiente -- el jugador debe
-// verlo y esquivar, el juego no marca cuál es el "correcto".
-function generateObstacles() {
-  const N = state.N;
-  const R = state.optimalIter;
-  const gapW = Math.max(2, Math.min(N, Math.round(N * CONFIG.gapFraction)));
-  const waves = [];
-  let center = Math.floor(Math.random() * N);
-  for (let r = 0; r < R; r++) {
-    center += Math.floor(Math.random() * 5) - 2; // serpentea -2..+2 carriles
-    center = Math.max(Math.floor(gapW / 2), Math.min(N - 1 - Math.floor(gapW / 2), center));
-    const gapStart = Math.max(0, Math.min(N - gapW, center - Math.floor(gapW / 2)));
-    const blocked = new Set();
-    for (let i = 0; i < N; i++) {
-      if (i < gapStart || i >= gapStart + gapW) blocked.add(i);
-    }
-    waves.push({
-      frac: (r + 1) / (R + 1), // posición 0..1 a lo largo de la pista
-      gapStart, gapW, blocked,
-      passed: false,
-    });
-  }
-  return waves;
+function applyX(q) {
+  return { a0: q.a1, a1: q.a0 };
+}
+function applyZ(q) {
+  return { a0: q.a0, a1: clean(-q.a1) };
+}
+function applyH(q) {
+  const r = Math.SQRT1_2;
+  return { a0: clean(r * (q.a0 + q.a1)), a1: clean(r * (q.a0 - q.a1)) };
+}
+// null si el fotón sigue en superposición -- solo "está" en un camino de
+// verdad cuando toda la probabilidad quedó de un solo lado.
+function definiteLane(q) {
+  if (q.a0 * q.a0 > 0.999) return 0;
+  if (q.a1 * q.a1 > 0.999) return 1;
+  return null;
 }
 
 // ---------------------------------------------------------------------
@@ -125,16 +96,12 @@ function cacheEls() {
   [
     "screen-start", "game-root", "screen-result",
     "btn-play", "btn-restart", "btn-retry", "btn-next",
-    "btn-hadamard", "img-hadamard",
-    "btn-handbrake", "img-lever",
-    "btn-steer-left", "btn-steer-right", "img-wheel",
-    "btn-accel",
-    "hud-n", "hud-iter", "hud-opt", "hud-engine",
-    "hud-timer-fill", "hud-timer-label",
+    "btn-gate-x", "btn-gate-h", "btn-gate-z", "btn-measure",
+    "hud-level-label", "hud-level-title", "hud-goal", "hud-state",
+    "hud-timer-block", "hud-timer-fill", "hud-timer-label",
     "toast",
     "result-eyebrow", "result-title", "result-text",
-    "track-canvas", "compass-canvas", "circuit-canvas",
-    "server-warning", "server-warning-url",
+    "track-canvas",
   ].forEach((id) => (els[id] = document.getElementById(id)));
 }
 
@@ -143,13 +110,7 @@ function showScreenEl(id) {
     els[s].classList.toggle("hidden", s !== id)
   );
   state.screen = id;
-  // los canvas quedan en 0x0 mientras #game-root tiene display:none;
-  // hay que recalcular su tamaño justo al volverse visibles.
-  if (id === "game-root") {
-    resizeTrackCanvas();
-    resizeCompassCanvas();
-    resizeCircuitCanvas();
-  }
+  if (id === "game-root") resizeTrackCanvas(); // el canvas queda en 0x0 mientras estaba oculto
 }
 
 let toastTimer = null;
@@ -161,237 +122,172 @@ function toast(msg, kind) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
+function setGateButtonsForLevel(lvl) {
+  ["x", "h", "z"].forEach((g) => {
+    const btn = els[`btn-gate-${g}`];
+    const allowed = lvl.gates.includes(g.toUpperCase());
+    btn.dataset.allowed = allowed ? "1" : "0";
+    btn.disabled = true;
+    btn.title = allowed ? "" : "No disponible en este nivel";
+  });
+  els["hud-timer-block"].classList.toggle("hidden", !lvl.hasTimer);
+}
+
 function setControlsEnabled(on) {
-  els["btn-handbrake"].disabled = !on;
-  els["btn-steer-left"].disabled = !on;
-  els["btn-steer-right"].disabled = !on;
-  els["btn-accel"].disabled = !on;
+  ["x", "h", "z"].forEach((g) => {
+    const btn = els[`btn-gate-${g}`];
+    btn.disabled = !on || btn.dataset.allowed !== "1";
+  });
+  els["btn-measure"].disabled = !on;
 }
 
 function updateHud() {
-  els["hud-n"].textContent = state.N;
-  els["hud-iter"].textContent = state.collisions;
-  els["hud-opt"].textContent = state.optimalIter;
-  els["hud-engine"].textContent = state.engineOn ? "encendido" : "apagado";
+  const lvl = CONFIG.levels[state.levelIndex];
+  els["hud-level-label"].textContent = lvl.hudLabel;
+  els["hud-level-title"].textContent = lvl.title;
+  els["hud-goal"].textContent = `Camino ${state.goalLane} (${state.goalLane === 0 ? "izquierda" : "derecha"})`;
+}
+
+function updateStateReadout() {
+  const p0 = state.q.a0 * state.q.a0;
+  const p1 = state.q.a1 * state.q.a1;
+  const sign = (amp) => (Math.abs(amp) < 0.02 ? "" : amp < 0 ? " (−)" : " (+)");
+  els["hud-state"].textContent =
+    `P(0)=${Math.round(p0 * 100)}%${sign(state.q.a0)} · P(1)=${Math.round(p1 * 100)}%${sign(state.q.a1)}`;
 }
 
 function updateTimerHud() {
-  if (!state.engineOn) {
-    els["hud-timer-fill"].style.width = "0%";
-    els["hud-timer-label"].textContent = "--";
-    return;
-  }
-  const remaining = Math.max(0, state.roundDeadline - performance.now());
-  const frac = state.timeLimitMs > 0 ? remaining / state.timeLimitMs : 0;
+  const frac = Math.max(0, 1 - state.trackProgress);
   els["hud-timer-fill"].style.width = `${(frac * 100).toFixed(1)}%`;
   els["hud-timer-fill"].classList.toggle("low", frac < 0.25);
-  els["hud-timer-label"].textContent = `${(remaining / 1000).toFixed(1)}s`;
-  return remaining;
+  els["hud-timer-label"].textContent = `${(state.driveDurationSec * frac).toFixed(1)}s`;
 }
 
-function updateControlVisuals() {
-  els["img-hadamard"].src = state.engineOn
-    ? "assets/img/btn_hadamard_on.png"
-    : "assets/img/btn_hadamard_off.png";
-  els["btn-hadamard"].classList.toggle("on", state.engineOn);
-
-  els["img-lever"].src = state.braking
-    ? "assets/img/lever_oraculo_on.png"
-    : "assets/img/lever_oraculo_off.png";
-  els["btn-handbrake"].classList.toggle("braking", state.braking);
-
-  els["btn-accel"].classList.toggle("ready", state.engineOn);
-}
-
-function setWheelVisual(dir) {
-  els["img-wheel"].src =
-    dir < 0
-      ? "assets/img/wheel_izquierda.png"
-      : dir > 0
-      ? "assets/img/wheel_derecha.png"
-      : "assets/img/wheel_neutro.png";
-}
-let wheelResetTimer = null;
-function flashWheel(dir) {
-  setWheelVisual(dir);
-  clearTimeout(wheelResetTimer);
-  wheelResetTimer = setTimeout(() => setWheelVisual(0), 320);
+function flashGateButton(g) {
+  const btn = els[`btn-gate-${g.toLowerCase()}`];
+  btn.classList.add("on");
+  clearTimeout(btn._flashTimer);
+  btn._flashTimer = setTimeout(() => btn.classList.remove("on"), 260);
 }
 
 // ---------------------------------------------------------------------
-// FLUJO DE RONDA / NIVEL
+// FLUJO DE RONDA
 // ---------------------------------------------------------------------
-function resetRound(n) {
-  state.n = n;
-  state.N = 2 ** n;
-  state.target = Math.floor(Math.random() * state.N);
-  state.engineOn = false;
-  state.optimalIter = bbhtOptimalIterations(n);
-  state.collisions = 0;
-  state.effectiveIter = state.optimalIter;
-  state.braking = false;
-  state.lanePos = (state.N - 1) / 2;
-  state.laneTarget = Math.round(state.lanePos);
-  state.obstacles = [];
-  state.timeLimitMs = 0;
-  state.roundDeadline = 0;
-  state.courseDurationSec = 1;
-  state.trackProgress = 0;
-  state.measuring = false;
-  state.autoFinishArmed = false;
-  state.crashFlashUntil = 0;
-  state.measuredIndex = null;
-  particles.length = 0;
-
-  setControlsEnabled(false);
-  setWheelVisual(0);
-  updateHud();
-  updateTimerHud();
-  updateControlVisuals();
-}
-
 function nextLevelAvailable() {
   return state.levelIndex < CONFIG.levels.length - 1;
 }
 
-function hadamardInit() {
-  state.engineOn = true;
-  state.collisions = 0;
-  state.effectiveIter = state.optimalIter;
-  state.obstacles = generateObstacles();
+function resetRound(levelIndex) {
+  const lvl = CONFIG.levels[levelIndex];
+  state.levelIndex = levelIndex;
+  state.q = { a0: 1, a1: 0 };
+  state.goalLane = Math.random() < 0.5 ? 0 : 1;
+
+  state.driving = false;
+  state.driveDurationSec = lvl.driveSeconds;
   state.trackProgress = 0;
-  state.timeLimitMs = (state.optimalIter + CONFIG.extraBufferIterations) * CONFIG.secondsPerIteration * 1000;
-  state.roundDeadline = performance.now() + state.timeLimitMs;
-  state.courseDurationSec = state.timeLimitMs / 1000;
-  setControlsEnabled(true);
-  toast("Motor encendido — esquiva los obstáculos hasta la meta.", "good");
-}
+  state.autoFinishArmed = false;
 
-// El volante solo responde con el freno activo -- es un drift real:
-// primero frenás, después girás. Sin freno, tocar el volante no hace nada.
-function attemptSteer(dir) {
-  if (!state.engineOn || state.measuring || !state.braking) return;
-  const next = Math.max(0, Math.min(state.N - 1, state.laneTarget + dir));
-  if (next !== state.laneTarget) spawnDust(dir);
-  state.laneTarget = next;
-  flashWheel(dir);
-}
+  state.obstacleLane = Math.random() < 0.5 ? 0 : 1;
+  state.obstaclePassed = false;
 
-let steerHoldTimer = null;
-function startSteerHold(dir) {
-  attemptSteer(dir);
-  clearInterval(steerHoldTimer);
-  steerHoldTimer = setInterval(() => attemptSteer(dir), CONFIG.steerRepeatMs);
-}
-function stopSteerHold() {
-  clearInterval(steerHoldTimer);
-  steerHoldTimer = null;
-}
+  state.measuring = false;
+  state.crashed = false;
+  state.measuredLane = null;
+  state.lastProbs = null;
 
-function checkCollisions() {
-  for (const wave of state.obstacles) {
-    if (wave.passed) continue;
-    if (state.trackProgress < wave.frac) continue;
-    wave.passed = true;
-    const lane = Math.max(0, Math.min(state.N - 1, Math.round(state.lanePos)));
-    if (wave.blocked.has(lane)) {
-      state.collisions++;
-      state.effectiveIter = Math.max(0, state.effectiveIter - 1);
-      state.crashFlashUntil = performance.now() + 350;
-      spawnCrash();
-      updateHud();
-    }
-  }
-}
+  state.gateLog = [];
+  state.crashFlashUntil = 0;
+  particles.length = 0;
 
-// Token que identifica la llamada a finishRound() "vigente". Sirve para
-// que una respuesta zombi de un intento viejo (o el watchdog de abajo)
-// no pise el estado de un intento más nuevo si el jugador reintentó.
-let measureToken = 0;
-
-// El resultado real SIEMPRE sale de Qiskit: se le manda a server.py el
-// número de iteraciones efectivas (R menos los choques) y arma+corre el
-// circuito de verdad.
-async function finishRound() {
-  if (!state.engineOn || state.measuring) return;
-  state.measuring = true;
+  setGateButtonsForLevel(lvl);
   setControlsEnabled(false);
-  toast("Midiendo con Qiskit…", null);
+  updateHud();
+  updateStateReadout();
+}
 
-  const myToken = ++measureToken;
+function beginLevel() {
+  state.driving = true;
+  setControlsEnabled(true);
+  toast("El fotón arrancó — aplicá compuertas y medí cuando quieras.", "good");
+}
 
-  // fetch() no trae timeout propio. En teoría AbortController debería
-  // bastar, pero si el navegador reutiliza una conexión persistente hacia
-  // un server.py que murió a mitad de camino, hemos visto que el fetch
-  // puede quedar realmente colgado (ni resuelve ni rechaza) incluso
-  // después de controller.abort(). Por eso hay DOS mecanismos: el abort
-  // (intenta cancelar la petición de verdad) y, aparte e independiente,
-  // un watchdog que libera la UI a los 10s pase lo que pase con la
-  // promesa -- el jugador nunca debe quedar atascado en "Midiendo…".
-  const controller = new AbortController();
-  const releaseStuck = (msg) => {
-    if (myToken !== measureToken) return; // ya hubo un intento más nuevo
-    console.warn("finishRound: liberando UI —", msg);
-    toast("No se pudo medir: ¿sigue corriendo 'python server.py'?", "warn");
-    state.measuring = false;
-    setControlsEnabled(true);
-  };
-  const abortId = setTimeout(() => controller.abort(), 9000);
-  const watchdogId = setTimeout(() => releaseStuck("timeout, la petición nunca resolvió"), 10000);
+function pressGate(g) {
+  const lvl = CONFIG.levels[state.levelIndex];
+  if (!state.driving || state.measuring || !lvl.gates.includes(g)) return;
+  if (g === "X") state.q = applyX(state.q);
+  if (g === "H") state.q = applyH(state.q);
+  if (g === "Z") state.q = applyZ(state.q);
+  state.gateLog.push(g);
+  flashGateButton(g);
+  spawnGateBurst(g);
+  updateStateReadout();
+}
 
-  try {
-    const resp = await fetch("/api/measure", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ n: state.n, target: state.target, iterations: state.effectiveIter }),
-      signal: controller.signal,
-    });
-    if (myToken !== measureToken) return; // un intento más nuevo ya tomó el control
-    if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({}));
-      throw new Error(errBody.error || `HTTP ${resp.status}`);
-    }
-    const data = await resp.json();
-    clearTimeout(watchdogId);
-    state.measuring = false;
-    state.measuredIndex = data.measured_index;
-    state.laneTarget = data.measured_index; // el auto se desliza al carril medido de verdad
-    setTimeout(() => showResult(data), CONFIG.revealMs);
-  } catch (err) {
-    if (myToken !== measureToken) return;
-    console.error(err);
-    releaseStuck(err.message);
-  } finally {
-    clearTimeout(abortId);
+function crash() {
+  state.crashed = true;
+  state.measuring = true;
+  state.driving = false;
+  setControlsEnabled(false);
+  state.crashFlashUntil = performance.now() + CONFIG.crashFlashMs;
+  spawnBurst("#ff8a5a", 16, 60, 160);
+  toast("¡Choque! Estabas en un camino definido justo sobre el obstáculo.", "warn");
+  setTimeout(showResult, CONFIG.revealMs);
+}
+
+function measureNow() {
+  if (!state.driving || state.measuring) return;
+  state.measuring = true;
+  state.driving = false;
+  setControlsEnabled(false);
+  const p1 = state.q.a1 * state.q.a1;
+  state.lastProbs = { p0: 1 - p1, p1 };
+  const result = Math.random() < p1 ? 1 : 0;
+  state.measuredLane = result;
+  state.q = result === 1 ? { a0: 0, a1: 1 } : { a0: 1, a1: 0 };
+  updateStateReadout();
+  toast("Midiendo…", null);
+  setTimeout(showResult, CONFIG.revealMs);
+}
+
+function levelExplain(lvl, success) {
+  switch (lvl.id) {
+    case "not":
+      return "NOT es determinista: un número impar de X te deja en el otro camino, un número par te deja igual. Nada de azar.";
+    case "hadamard":
+      return "Con Hadamard sola cada medición es una moneda cuántica real: no hay forma de forzar el resultado con esta única compuerta.";
+    case "interference":
+      return success
+        ? "Esa es la interferencia cuántica: la fase Z era invisible sola, pero sumada entre dos Hadamard cambió el resultado con certeza."
+        : "Pista: con H sola tenés 50%. Para asegurar el camino contrario probá H, después Z, después H de nuevo (H·Z·H = X).";
+    default:
+      return "En superposición un obstáculo no te frena — recién se decide todo al medir.";
   }
 }
 
-function showResult(data) {
-  state.lastWin = data.success;
-  const probPct = (data.success_probability * 100).toFixed(0);
-  const crashNote = state.collisions > 0
-    ? `${state.collisions} choque(s) te costaron precisión (quedaron ${data.iterations} de ${state.optimalIter} iteraciones).`
-    : `esquivaste todo — corriste las ${data.iterations} iteraciones completas.`;
+function showResult() {
+  const lvl = CONFIG.levels[state.levelIndex];
+  let success, title, text;
 
-  els["result-eyebrow"].textContent = data.success ? "Medición exitosa (Qiskit)" : "Medición fallida (Qiskit)";
-  els["result-title"].textContent = data.success
-    ? `Carril ${data.measured_index + 1} — ¡correcto!`
-    : `Carril ${data.measured_index + 1} — no era`;
-
-  if (data.success) {
-    els["result-text"].textContent =
-      `El circuito real (${data.n} qubits + ancilla) colapsó en el carril correcto al medir; ${crashNote} ` +
-      `Probabilidad de éxito calculada por Qiskit: ${probPct}%.`;
+  if (state.crashed) {
+    success = false;
+    title = "Chocaste";
+    text = `Estabas definido en el camino ${state.obstacleLane} justo donde estaba el obstáculo. ` + levelExplain(lvl, false);
   } else {
-    els["result-text"].textContent =
-      `El carril correcto era el ${data.target_index + 1} (bits ${data.target_bits}). Qiskit midió ${probPct}% ` +
-      `de probabilidad ahí; ${crashNote}`;
+    success = state.measuredLane === state.goalLane;
+    const probText = state.lastProbs
+      ? `Antes de medir: P(0)=${Math.round(state.lastProbs.p0 * 100)}% · P(1)=${Math.round(state.lastProbs.p1 * 100)}%. `
+      : "";
+    title = success ? `Camino ${state.measuredLane} — ¡correcto!` : `Camino ${state.measuredLane} — no era`;
+    text = `${probText}La meta era el camino ${state.goalLane}. ` + levelExplain(lvl, success);
   }
 
-  els["btn-next"].textContent = data.success
-    ? nextLevelAvailable()
-      ? "Siguiente nivel →"
-      : "Jugar de nuevo (nivel 1)"
+  state.lastWin = success;
+  els["result-eyebrow"].textContent = success ? "Medición exitosa" : "Medición fallida";
+  els["result-title"].textContent = title;
+  els["result-text"].textContent = text;
+  els["btn-next"].textContent = success
+    ? nextLevelAvailable() ? "Siguiente nivel →" : "Jugar de nuevo (nivel 1)"
     : "Reintentar";
 
   showScreenEl("screen-result");
@@ -400,27 +296,20 @@ function showResult(data) {
 // ---------------------------------------------------------------------
 // PARTÍCULAS
 // ---------------------------------------------------------------------
-function spawnCrash() {
-  for (let i = 0; i < 16; i++) {
+function spawnBurst(color, count, speedMin, speedMax) {
+  for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    const speed = 60 + Math.random() * 100;
+    const speed = speedMin + Math.random() * (speedMax - speedMin);
     particles.push({
-      x: 0, y: 0,
+      x: lastCarPos.x, y: lastCarPos.y,
       vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-      life: 1, color: "#ff8a5a",
+      life: 1, color,
     });
   }
 }
-function spawnDust(dir) {
-  for (let i = 0; i < 3; i++) {
-    const a = Math.PI / 2 + (Math.random() - 0.5) * 0.6 - dir * 0.3;
-    const speed = 20 + Math.random() * 30;
-    particles.push({
-      x: 0, y: 0,
-      vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-      life: 0.6, color: "#7fb8cc",
-    });
-  }
+const GATE_COLORS = { X: "#ffb545", H: "#49d3ff", Z: "#ff5da2" };
+function spawnGateBurst(g) {
+  spawnBurst(GATE_COLORS[g] || "#ffffff", 8, 20, 60);
 }
 
 function updateParticles(dt) {
@@ -490,14 +379,37 @@ function drawCar(ctx, x, y, alpha) {
   ctx.restore();
 }
 
+// El fotón puede estar "presente" en los dos caminos a la vez: se dibuja
+// un fantasma por camino, con opacidad = probabilidad de ese camino y un
+// anillo de color que marca el SIGNO de la amplitud (la fase). La fase
+// no cambia la opacidad ni la posición -- por eso Z sola no se nota acá,
+// solo el anillo cambia de celeste a magenta.
+function drawGhost(ctx, x, y, prob, amp) {
+  if (prob < 0.005) return;
+  const alpha = Math.min(1, 0.18 + 0.82 * prob);
+  ctx.save();
+  ctx.translate(x, y);
+  if (Math.abs(amp) > 0.02) {
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.strokeStyle = amp >= 0 ? "rgba(73,211,255,.85)" : "rgba(255,93,162,.9)";
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = alpha;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  drawCar(ctx, x, y, alpha);
+}
+
 function laneX(i, left, laneW) {
   return left + (i + 0.5) * laneW;
 }
 
 function trackGeometry(w, h) {
-  const left = Math.max(24, w * 0.08);
+  const left = Math.max(28, w * 0.18);
   const right = w - left;
-  const laneW = (right - left) / state.N;
+  const laneW = (right - left) / 2;
   const metaY = h * 0.1;
   const startY = h * 0.9;
   return { left, right, laneW, metaY, startY };
@@ -525,13 +437,12 @@ function drawObstacle(ctx, x, y, size) {
 function renderTrack(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
   const { left, right, laneW, metaY, startY } = trackGeometry(w, h);
+  const lvl = CONFIG.levels[state.levelIndex];
 
-  // asfalto
   ctx.fillStyle = "rgba(255,255,255,.02)";
   ctx.fillRect(left, metaY, right - left, startY - metaY);
 
-  // carriles
-  for (let i = 0; i <= state.N; i++) {
+  for (let i = 0; i <= 2; i++) {
     const x = left + i * laneW;
     ctx.beginPath();
     ctx.moveTo(x, metaY);
@@ -543,7 +454,9 @@ function renderTrack(ctx, w, h) {
   }
   ctx.setLineDash([]);
 
-  // meta
+  ctx.fillStyle = "rgba(255,208,80,.10)";
+  ctx.fillRect(left + state.goalLane * laneW, metaY, laneW, startY - metaY);
+
   ctx.beginPath();
   ctx.moveTo(left, metaY);
   ctx.lineTo(right, metaY);
@@ -556,150 +469,40 @@ function renderTrack(ctx, w, h) {
   ctx.textBaseline = "bottom";
   ctx.fillText("META", (left + right) / 2, metaY - 6);
 
-  // números de carril
-  ctx.fillStyle = "rgba(255,255,255,.4)";
   ctx.textBaseline = "top";
-  for (let i = 0; i < state.N; i++) {
-    ctx.fillText(String(i + 1), laneX(i, left, laneW), startY + 8);
+  for (let i = 0; i < 2; i++) {
+    ctx.fillStyle = i === state.goalLane ? "rgba(255,208,80,.9)" : "rgba(255,255,255,.4)";
+    ctx.fillText(`camino ${i}`, laneX(i, left, laneW), startY + 8);
   }
 
-  // red de obstáculos (una ola por iteración real de Grover)
-  if (state.engineOn) {
-    const obSize = Math.min(laneW * 0.72, 30);
-    for (const wave of state.obstacles) {
-      const y = startY - (startY - metaY) * wave.frac;
-      for (const i of wave.blocked) {
-        drawObstacle(ctx, laneX(i, left, laneW), y, obSize);
-      }
-    }
+  if (lvl.hasObstacle) {
+    const y = startY - (startY - metaY) * state.obstacleFrac;
+    drawObstacle(ctx, laneX(state.obstacleLane, left, laneW), y, Math.min(laneW * 0.7, 34));
   }
 
-  // resaltar carril correcto/medido al revelar resultado
-  if (state.measuredIndex !== null && (state.screen === "screen-result" || state.measuring)) {
-    const ok = state.measuredIndex === state.target;
-    ctx.fillStyle = ok ? "rgba(52,224,122,.18)" : "rgba(255,90,90,.18)";
-    ctx.fillRect(left + state.measuredIndex * laneW, metaY, laneW, startY - metaY);
-  }
-
-  // auto principal
   const carY = startY - (startY - metaY) * Math.min(1, state.trackProgress);
-  const carX = laneX(state.lanePos, left, laneW);
+  const p0 = state.q.a0 * state.q.a0;
+  const p1 = state.q.a1 * state.q.a1;
+  lastCarPos = { x: p0 * laneX(0, left, laneW) + p1 * laneX(1, left, laneW), y: carY };
 
-  ctx.save();
-  ctx.translate(carX, carY);
+  ctx.lineWidth = 2;
   for (const p of particles) {
-    ctx.globalAlpha = Math.max(0, p.life) * 0.6;
+    ctx.globalAlpha = Math.max(0, p.life) * 0.7;
     ctx.strokeStyle = p.color;
-    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(p.x, p.y);
     ctx.lineTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03);
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
-  ctx.restore();
 
-  drawCar(ctx, carX, carY, state.engineOn ? 1 : 0.85);
+  drawGhost(ctx, laneX(0, left, laneW), carY, p0, state.q.a0);
+  drawGhost(ctx, laneX(1, left, laneW), carY, p1, state.q.a1);
 
-  // destello rojo al chocar
   if (performance.now() < state.crashFlashUntil) {
-    const t = (state.crashFlashUntil - performance.now()) / 350;
+    const t = (state.crashFlashUntil - performance.now()) / CONFIG.crashFlashMs;
     ctx.fillStyle = `rgba(255,60,60,${0.22 * t})`;
     ctx.fillRect(0, 0, w, h);
-  }
-}
-
-// Brújula EXTERNA: franja separada de la pista. Marca un único carril de
-// victoria (state.target) que se va iluminando a medida que te acercás
-// al resultado final (meta o se acaba el tiempo) -- arranca tenue y se
-// enciende de verdad sobre el final, dando una pista real pero que hay
-// que estar mirando la brújula (no la pista) para aprovechar a tiempo.
-function renderCompass(ctx, w, h) {
-  ctx.clearRect(0, 0, w, h);
-  const left = Math.max(24, w * 0.08);
-  const right = w - left;
-  const laneW = (right - left) / state.N;
-  const midY = h / 2;
-
-  ctx.beginPath();
-  ctx.moveTo(left, midY);
-  ctx.lineTo(right, midY);
-  ctx.strokeStyle = "rgba(255,255,255,.14)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  for (let i = 0; i <= state.N; i++) {
-    const x = left + i * laneW;
-    ctx.beginPath();
-    ctx.moveTo(x, midY - 6);
-    ctx.lineTo(x, midY + 6);
-    ctx.strokeStyle = "rgba(255,255,255,.18)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  const remaining = state.timeLimitMs > 0 ? Math.max(0, state.roundDeadline - performance.now()) / state.timeLimitMs : 1;
-  const proximity = state.engineOn ? Math.max(state.trackProgress, 1 - remaining) : 0;
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / (260 - proximity * 160));
-  const glow = state.engineOn ? proximity * (0.5 + 0.5 * pulse) : 0;
-
-  const tx = laneX(state.target, left, laneW);
-  ctx.beginPath();
-  ctx.arc(tx, midY, 4 + glow * 7, 0, Math.PI * 2);
-  ctx.fillStyle = `rgba(255,208,80,${0.2 + glow * 0.75})`;
-  ctx.shadowColor = "rgba(255,208,80,.95)";
-  ctx.shadowBlur = 4 + glow * 24;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-
-  ctx.fillStyle = "rgba(255,255,255,.55)";
-  ctx.font = MONO;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText("brújula externa", left, 14);
-}
-
-// Gráfico chico del circuito: un carril por qubit de datos + la ancilla,
-// con un bloque naranja (oráculo) y uno verde (difusor) por cada
-// iteración real -- el mismo patrón que genera la red de obstáculos.
-function renderCircuitDiagram(ctx, w, h) {
-  ctx.clearRect(0, 0, w, h);
-  const wires = state.n + 1;
-  const padY = 6;
-  const wireGap = wires > 1 ? (h - padY * 2) / (wires - 1) : 0;
-  const padX = 5;
-
-  ctx.strokeStyle = "rgba(255,255,255,.3)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < wires; i++) {
-    const y = padY + i * wireGap;
-    ctx.beginPath();
-    ctx.moveTo(padX, y);
-    ctx.lineTo(w - padX, y);
-    ctx.stroke();
-  }
-
-  let x = padX + 8;
-  ctx.fillStyle = "rgba(73,211,255,.9)";
-  for (let i = 0; i < wires; i++) {
-    const y = padY + i * wireGap;
-    roundRectPath(ctx, x - 3, y - 3, 6, 6, 1.5);
-    ctx.fill();
-  }
-  x += 12;
-
-  const R = Math.max(1, state.optimalIter);
-  const avail = Math.max(4, w - padX - 4 - x);
-  const blockW = Math.max(4, avail / (R * 2.4));
-  const blockH = h - padY * 2 + 6;
-
-  for (let r = 0; r < R; r++) {
-    ctx.fillStyle = "rgba(255,138,90,.55)";
-    ctx.fillRect(x, padY - 3, blockW, blockH);
-    x += blockW * 1.15;
-    ctx.fillStyle = "rgba(52,224,122,.5)";
-    ctx.fillRect(x, padY - 3, blockW, blockH);
-    x += blockW * 1.25;
   }
 }
 
@@ -720,11 +523,7 @@ function setupCanvas(canvas) {
   return { ctx, resize };
 }
 
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-let trackCtx, compassCtx, circuitCtx, resizeTrackCanvas, resizeCompassCanvas, resizeCircuitCanvas;
+let trackCtx, resizeTrackCanvas;
 
 function loop(ts) {
   const dt = Math.min(0.05, (ts - lastTs) / 1000);
@@ -733,43 +532,35 @@ function loop(ts) {
   try {
     if (state.screen === "game-root") {
       updateParticles(dt);
-      const rate = 1 - Math.exp(-CONFIG.laneLerpRate * dt);
-      state.lanePos = lerp(state.lanePos, state.laneTarget, rate);
+      const lvl = CONFIG.levels[state.levelIndex];
 
-      if (state.engineOn && !state.measuring) {
-        if (state.braking && Math.random() < CONFIG.brakeDropChancePerSec * dt) {
-          state.braking = false;
-          updateControlVisuals();
-          toast("¡El freno se soltó! Actívalo de nuevo para girar.", "warn");
+      if (state.driving) {
+        state.trackProgress = Math.min(1, state.trackProgress + dt / state.driveDurationSec);
+
+        if (lvl.hasObstacle && !state.obstaclePassed && state.trackProgress >= state.obstacleFrac) {
+          state.obstaclePassed = true;
+          const lane = definiteLane(state.q);
+          if (lane !== null && lane === state.obstacleLane) {
+            crash();
+          } else {
+            toast(lane === null ? "Cruzaste en superposición — esquivaste sin saberlo." : "Pasaste limpio por el otro camino.", "good");
+          }
         }
-        const brakeMul = state.braking ? CONFIG.brakeFactor : 1;
-        state.trackProgress = Math.min(1, state.trackProgress + (dt / state.courseDurationSec) * brakeMul);
-        checkCollisions();
 
-        const remaining = updateTimerHud();
-        // Se dispara UNA sola vez al agotarse el tiempo o al llegar a la
-        // meta. Si el fetch falla (server.py no corriendo), finishRound()
-        // reactiva los controles para reintentar a mano -- sin este
-        // guard, cada frame con la condición cumplida volvería a llamar
-        // finishRound() y, si sigue fallando, reintentaría sin parar.
-        if ((remaining <= 0 || state.trackProgress >= 1) && !state.autoFinishArmed) {
+        // Guard: sin esto, cada frame con progress>=1 volvería a llamar
+        // measureNow() (que ya puso driving=false, pero el chequeo de
+        // arriba corre antes de que el nuevo estado se refleje afuera).
+        if (state.driving && state.trackProgress >= 1 && !state.autoFinishArmed) {
           state.autoFinishArmed = true;
-          finishRound();
+          measureNow();
         }
+
+        if (lvl.hasTimer) updateTimerHud();
       }
 
       renderTrack(trackCtx, els["track-canvas"].clientWidth, els["track-canvas"].clientHeight);
-      // renderTrack() puede disparar finishRound() (async) pero nunca
-      // oculta #game-root de inmediato (el resultado se muestra tras un
-      // setTimeout), así que el compás siempre tiene tamaño válido aquí.
-      if (state.screen === "game-root") {
-        renderCompass(compassCtx, els["compass-canvas"].clientWidth, els["compass-canvas"].clientHeight);
-        renderCircuitDiagram(circuitCtx, els["circuit-canvas"].clientWidth, els["circuit-canvas"].clientHeight);
-      }
     }
   } catch (err) {
-    // un fallo de un frame no debe congelar el juego entero (rAF nunca
-    // más se reprograma si esta función lanza sin capturarlo).
     console.error("loop() error:", err);
   }
   requestAnimationFrame(loop);
@@ -779,76 +570,36 @@ function loop(ts) {
 // INPUT
 // ---------------------------------------------------------------------
 function wire() {
-  els["btn-play"].addEventListener("click", () => showScreenEl("game-root"));
-
-  els["btn-hadamard"].addEventListener("click", () => {
-    if (state.engineOn) return;
-    hadamardInit();
-    updateControlVisuals();
-    updateHud();
+  els["btn-play"].addEventListener("click", () => {
+    showScreenEl("game-root");
+    beginLevel();
   });
 
-  // Freno de mano: freno real (frena el avance por la pista mientras se
-  // mantiene armado), no algo ligado al oráculo -- toggle por clic, no
-  // por sostener, para que funcione igual con mouse que con pantalla táctil.
-  els["btn-handbrake"].addEventListener("click", () => {
-    if (!state.engineOn || state.measuring) return;
-    state.braking = !state.braking;
-    updateControlVisuals();
+  els["btn-gate-x"].addEventListener("click", () => pressGate("X"));
+  els["btn-gate-h"].addEventListener("click", () => pressGate("H"));
+  els["btn-gate-z"].addEventListener("click", () => pressGate("Z"));
+  els["btn-measure"].addEventListener("click", () => measureNow());
+
+  els["btn-restart"].addEventListener("click", () => {
+    resetRound(state.levelIndex);
+    beginLevel();
   });
-
-  els["btn-steer-left"].addEventListener("pointerdown", (e) => { e.preventDefault(); startSteerHold(-1); });
-  els["btn-steer-right"].addEventListener("pointerdown", (e) => { e.preventDefault(); startSteerHold(1); });
-  ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => {
-    els["btn-steer-left"].addEventListener(ev, stopSteerHold);
-    els["btn-steer-right"].addEventListener(ev, stopSteerHold);
-  });
-
-  els["btn-accel"].addEventListener("click", finishRound);
-
-  els["btn-restart"].addEventListener("click", () => resetRound(state.n));
 
   els["btn-retry"].addEventListener("click", () => {
-    resetRound(state.n);
+    resetRound(state.levelIndex);
     showScreenEl("game-root");
+    beginLevel();
   });
 
   els["btn-next"].addEventListener("click", () => {
     const won = !!state.lastWin;
-    if (won && nextLevelAvailable()) {
-      state.levelIndex++;
-    } else if (won) {
-      state.levelIndex = 0;
-    }
-    resetRound(CONFIG.levels[state.levelIndex]);
+    let nextIndex = state.levelIndex;
+    if (won && nextLevelAvailable()) nextIndex = state.levelIndex + 1;
+    else if (won) nextIndex = 0;
+    resetRound(nextIndex);
     showScreenEl("game-root");
+    beginLevel();
   });
-}
-
-// ---------------------------------------------------------------------
-// SALUD DEL BACKEND
-// ---------------------------------------------------------------------
-// Error recurrente en la práctica: el jugador corre "python -m
-// http.server" (el módulo genérico de Python) en vez de "python
-// server.py" -- la página carga bien (sirve los mismos archivos
-// estáticos) pero /api/measure no existe, así que recién se entera del
-// problema al final de la partida, al intentar medir. Esto lo detecta
-// apenas carga la página y lo avisa de entrada, sin esperar a jugar.
-async function checkBackendHealth() {
-  els["server-warning-url"].textContent = location.origin + "/";
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
-  try {
-    const resp = await fetch("/api/optimal?n=2", { signal: controller.signal });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const data = await resp.json();
-    if (typeof data.R !== "number") throw new Error("respuesta inesperada");
-  } catch (err) {
-    console.warn("checkBackendHealth: el backend de Qiskit no respondió como se esperaba —", err.message);
-    els["server-warning"].classList.remove("hidden");
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 // ---------------------------------------------------------------------
@@ -857,12 +608,9 @@ async function checkBackendHealth() {
 document.addEventListener("DOMContentLoaded", () => {
   cacheEls();
   ({ ctx: trackCtx, resize: resizeTrackCanvas } = setupCanvas(els["track-canvas"]));
-  ({ ctx: compassCtx, resize: resizeCompassCanvas } = setupCanvas(els["compass-canvas"]));
-  ({ ctx: circuitCtx, resize: resizeCircuitCanvas } = setupCanvas(els["circuit-canvas"]));
   wire();
-  resetRound(CONFIG.levels[state.levelIndex]);
+  resetRound(0);
   showScreenEl("screen-start");
-  checkBackendHealth();
   requestAnimationFrame((ts) => {
     lastTs = ts;
     loop(ts);
